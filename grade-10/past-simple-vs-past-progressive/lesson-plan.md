@@ -32,7 +32,7 @@ The lesson tackles these directly in Stage 3 (error clinic) instead of hoping th
 ## Materials
 
 - Student handout (`student-handout.md`): reading text, discovery questions, error clinic, practice, exit ticket
-- Board and two colours of marker (blue = Past Simple, red = Past Progressive)
+- Board and two colours of marker (blue = Past Simple, orange or red = Past Progressive)
 - Alibi game cards (in the handout) and a timer
 
 ## Lesson outline
@@ -64,7 +64,7 @@ Keep the sentences on the board. You'll come back to them at the end of Stage 3.
 **Aim:** students work out the rules themselves from a text instead of being told.
 
 1. Students read *The Night the Lights Went Out* (handout, Part A) once for general meaning. Ask one gist question: *"Why does the writer remember that night?"* (1 min)
-2. Individually, students underline Past Simple verbs in **blue** and Past Progressive verbs in **red** (3 min).
+2. Individually, students underline Past Simple verbs in **blue** and Past Progressive verbs in **orange** (3 min).
 3. In pairs, they answer the discovery questions in Part B (4 min).
 4. Whole-class check. Build this table on the board from what students say:
 

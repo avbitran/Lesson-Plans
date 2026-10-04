@@ -18,7 +18,7 @@ When the electricity came back an hour later, we weren't studying anymore. We we
 
 ## Part B: Discover the rules
 
-1. Underline every **Past Simple** verb in **blue** and every **Past Progressive** verb in **red**.
+1. Underline every **Past Simple** verb in **blue** and every **Past Progressive** verb in **orange** (or red).
 2. Look at paragraph 1, sentences 1–3. Which tense does the writer use to describe the scene? Why?
    ______________________________________________
 3. *"Noa screamed, the TV stopped, and the whole building went silent."* Which tense is this? Did the actions happen at the same time or one after another?
