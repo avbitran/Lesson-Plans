@@ -153,3 +153,30 @@ td.n, th.n { width: 18pt; color: var(--muted); }
 
 .qbank { columns: 2; column-gap: 18pt; margin: 0; }
 .qbank li { break-inside: avoid; }
+
+/* ---------- Quiz ---------- */
+.score-box { display: flex; align-items: center; gap: 6pt; font-size: 9pt; color: var(--muted); }
+.score-box b { display: inline-block; min-width: 46pt; height: 24pt; border: 1.2pt solid var(--ink); border-radius: 4pt; text-align: right; padding: 4pt 6pt; font-size: 11pt; }
+
+.quiz-part { display: flex; align-items: center; gap: 8pt; margin: 14pt 0 4pt; break-after: avoid; border-bottom: 1.5pt solid var(--ink); padding-bottom: 4pt; }
+.quiz-part .tag { font-family: 'Fraunces', Georgia, serif; font-size: 11pt; font-weight: 700; color: #fff; background: var(--pp); border-radius: 4pt; padding: 2pt 7pt; }
+.quiz-part h2 { margin: 0; flex: 1; font-size: 14pt; }
+.quiz-part .level { font-size: 8pt; color: var(--muted); letter-spacing: 1pt; white-space: nowrap; }
+.quiz-part .level i { font-style: normal; color: var(--pp); letter-spacing: 2pt; }
+.quiz-part .pts { font-size: 9pt; font-weight: 600; color: #fff; background: var(--ink); border-radius: 99pt; padding: 2pt 9pt; white-space: nowrap; }
+.instr { color: var(--muted); font-style: italic; font-size: 9.5pt; margin: 2pt 0 8pt; }
+
+.mc { display: grid; grid-template-columns: 1fr 1fr; gap: 7pt 20pt; font-size: 10.5pt; }
+.mc .q { margin: 0; }
+.opt { white-space: nowrap; font-weight: 500; color: var(--ink); }
+
+.quiz-story { font-size: 10.5pt; line-height: 2.25; }
+.quiz-story b { color: var(--pp); }
+.quiz-story .blank { min-width: 90pt; }
+
+.mark { display: inline-block; width: 12pt; height: 12pt; border: 1pt solid #9A9385; border-radius: 2pt; vertical-align: -2pt; margin-left: 4pt; }
+
+/* Answer key */
+.ans { color: #2F6B2B; font-weight: 600; }
+.wrong { color: var(--muted); text-decoration: line-through; }
+.accept { font-size: 8.5pt; color: var(--muted); }
