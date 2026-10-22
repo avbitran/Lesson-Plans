@@ -287,15 +287,16 @@ function assertWritable(attempt, clientId) {
 
 // ------------------------------------------------------------- auth routes
 
-const loginFailures = new Map(); // ip -> { count, first }
-function checkLoginRate(ip) {
-  const f = loginFailures.get(ip);
-  if (f && now() - f.first < 15 * 60e3 && f.count >= 20)
-    throw new HttpError(429, 'Too many failed logins. Wait 15 minutes and try again.');
+// Counted per username: behind a proxy or tunnel a whole class shares one IP.
+const loginFailures = new Map(); // username -> { count, first }
+function checkLoginRate(key) {
+  const f = loginFailures.get(key);
+  if (f && now() - f.first < 15 * 60e3 && f.count >= 10)
+    throw new HttpError(429, 'Too many wrong passwords for this username. Wait 15 minutes or ask your teacher to reset it.');
 }
-function noteLoginFailure(ip) {
-  const f = loginFailures.get(ip);
-  if (!f || now() - f.first > 15 * 60e3) loginFailures.set(ip, { count: 1, first: now() });
+function noteLoginFailure(key) {
+  const f = loginFailures.get(key);
+  if (!f || now() - f.first > 15 * 60e3) loginFailures.set(key, { count: 1, first: now() });
   else f.count++;
 }
 
@@ -327,12 +328,12 @@ route('POST', '/api/setup', null, async ({ req, res }) => {
 });
 
 route('POST', '/api/login', null, async ({ req, res }) => {
-  const ip = req.socket.remoteAddress;
-  checkLoginRate(ip);
   const b = await readJson(req);
-  const user = db.prepare('SELECT * FROM users WHERE username = ?').get(String(b.username || '').trim());
+  const username = String(b.username || '').trim().toLowerCase().slice(0, 100);
+  checkLoginRate(username);
+  const user = db.prepare('SELECT * FROM users WHERE username = ?').get(username);
   if (!user || !auth.verifyPassword(String(b.password || ''), user.pass_hash)) {
-    noteLoginFailure(ip);
+    noteLoginFailure(username);
     throw new HttpError(401, 'Wrong username or password.');
   }
   startSession(req, res, user);

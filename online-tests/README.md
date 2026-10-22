@@ -51,6 +51,15 @@ Then:
 4. Students log in at the site's address and press **Start**.
 5. Open the test from the **Tests** page to watch live, then **Grade** each submission and **Save & return to student**.
 
+### Free: run it on your laptop during the lesson
+
+1. Install Node.js (LTS) from nodejs.org and `cloudflared` from Cloudflare's "Cloudflare Tunnel" downloads page.
+2. In the `online-tests` folder, run `npm start`.
+3. In a second terminal, run `cloudflared tunnel --url http://localhost:3000`. It prints an address like `https://some-words.trycloudflare.com`.
+4. Give students that address (write it on the board). It's HTTPS, so the microphone works on their Chromebooks.
+
+Everything is stored on your laptop in `online-tests/data/`, so keep the laptop on and awake until everyone has submitted. Grading can happen later on the laptop without the tunnel (http://localhost:3000). The address changes every time you start the tunnel. Cloudflare offers these quick tunnels free, without an account, for testing, with no uptime guarantee, and some school networks block them, so try it once before a real test.
+
 ### Putting it online
 
 Students need to reach it from home or school, so it has to run on a server with:

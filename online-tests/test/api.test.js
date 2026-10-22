@@ -168,3 +168,10 @@ test('static files cannot escape the public folder', async () => {
   assert.equal(ok.status, 200);
   assert.match(ok.headers.get('content-security-policy'), /default-src 'self'/);
 });
+
+test('wrong passwords lock only that username', async () => {
+  const c = client();
+  for (let i = 0; i < 10; i++) await c('POST', '/api/login', { username: 'nobody', password: 'x' });
+  assert.equal((await c('POST', '/api/login', { username: 'nobody', password: 'x' })).status, 429);
+  assert.equal((await c('POST', '/api/login', { username: 'teach', password: 'password1' })).status, 200);
+});
