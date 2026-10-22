@@ -1,0 +1,314 @@
+{
+  "title": "Quiz: Past Simple vs. Past Progressive",
+  "instructions": "The quiz starts easy and gets harder. The early parts are worth the most points, so do them carefully first.",
+  "language": "en-US",
+  "timeLimitMin": 25,
+  "classes": [],
+  "settings": {
+    "requireFullscreen": true,
+    "maxViolations": 3,
+    "onLimit": "lock",
+    "blockCopyPaste": true,
+    "readAloudForAll": false,
+    "recordingForAll": false,
+    "showResults": "full"
+  },
+  "questions": [
+    {
+      "id": "partA",
+      "type": "section",
+      "title": "Part A · Choose the correct form (40 points, 4 each)",
+      "prompt": "Choose the correct answer."
+    },
+    {
+      "id": "a1",
+      "type": "mc",
+      "prompt": "At 9 o'clock last night I ___ a film.",
+      "options": [
+        "watched",
+        "was watching"
+      ],
+      "correct": 1,
+      "points": 4
+    },
+    {
+      "id": "a2",
+      "type": "mc",
+      "prompt": "Last summer we ___ to Eilat for a week.",
+      "options": [
+        "went",
+        "were going"
+      ],
+      "correct": 0,
+      "points": 4
+    },
+    {
+      "id": "a3",
+      "type": "mc",
+      "prompt": "They ___ playing cards when the lights went out.",
+      "options": [
+        "was",
+        "were"
+      ],
+      "correct": 1,
+      "points": 4
+    },
+    {
+      "id": "a4",
+      "type": "mc",
+      "prompt": "I didn't ___ you at the party.",
+      "options": [
+        "see",
+        "saw"
+      ],
+      "correct": 0,
+      "points": 4
+    },
+    {
+      "id": "a5",
+      "type": "mc",
+      "prompt": "While she ___, the phone rang.",
+      "options": [
+        "cooked",
+        "was cooking"
+      ],
+      "correct": 1,
+      "points": 4
+    },
+    {
+      "id": "a6",
+      "type": "mc",
+      "prompt": "Did you ___ your homework?",
+      "options": [
+        "finish",
+        "finished"
+      ],
+      "correct": 0,
+      "points": 4
+    },
+    {
+      "id": "a7",
+      "type": "mc",
+      "prompt": "I ___ the answer, but I didn't say anything.",
+      "options": [
+        "knew",
+        "was knowing"
+      ],
+      "correct": 0,
+      "points": 4
+    },
+    {
+      "id": "a8",
+      "type": "mc",
+      "prompt": "He opened the door, ___ on the light and sat down.",
+      "options": [
+        "turned",
+        "was turning"
+      ],
+      "correct": 0,
+      "points": 4
+    },
+    {
+      "id": "a9",
+      "type": "mc",
+      "prompt": "When the teacher came in, the students ___ so loudly that nobody heard her.",
+      "options": [
+        "talked",
+        "were talking"
+      ],
+      "correct": 1,
+      "points": 4
+    },
+    {
+      "id": "a10",
+      "type": "mc",
+      "prompt": "I was walking home ___ it started to rain.",
+      "options": [
+        "when",
+        "while"
+      ],
+      "correct": 0,
+      "points": 4
+    },
+    {
+      "id": "partB",
+      "type": "section",
+      "title": "Part B · Complete the story (30 points, 3 each)",
+      "prompt": "Write the verbs in the Past Simple or the Past Progressive.\n\nLast Tuesday our class (1) ___ (go) on a trip to the Galilee. When we (2) ___ (arrive), it (3) ___ (rain), so we (4) ___ (decide) to stay on the bus. While we (5) ___ (sit) there, our teacher (6) ___ (start) to tell us funny stories about her first school trip. Suddenly, the driver (7) ___ (shout), \"Look!\" A family of deer (8) ___ (cross) the road in front of us. We (9) ___ (not / have) a camera, but everyone (10) ___ (take) photos with their phones."
+    },
+    {
+      "id": "b1",
+      "type": "short",
+      "prompt": "(1) go",
+      "accepted": [
+        "went"
+      ],
+      "points": 3
+    },
+    {
+      "id": "b2",
+      "type": "short",
+      "prompt": "(2) arrive",
+      "accepted": [
+        "arrived"
+      ],
+      "points": 3
+    },
+    {
+      "id": "b3",
+      "type": "short",
+      "prompt": "(3) rain",
+      "accepted": [
+        "was raining"
+      ],
+      "points": 3
+    },
+    {
+      "id": "b4",
+      "type": "short",
+      "prompt": "(4) decide",
+      "accepted": [
+        "decided"
+      ],
+      "points": 3
+    },
+    {
+      "id": "b5",
+      "type": "short",
+      "prompt": "(5) sit",
+      "accepted": [
+        "were sitting"
+      ],
+      "points": 3
+    },
+    {
+      "id": "b6",
+      "type": "short",
+      "prompt": "(6) start",
+      "accepted": [
+        "started"
+      ],
+      "points": 3
+    },
+    {
+      "id": "b7",
+      "type": "short",
+      "prompt": "(7) shout",
+      "accepted": [
+        "shouted"
+      ],
+      "points": 3
+    },
+    {
+      "id": "b8",
+      "type": "short",
+      "prompt": "(8) cross",
+      "accepted": [
+        "was crossing",
+        "were crossing"
+      ],
+      "points": 3
+    },
+    {
+      "id": "b9",
+      "type": "short",
+      "prompt": "(9) not / have",
+      "accepted": [
+        "didn't have",
+        "did not have"
+      ],
+      "points": 3
+    },
+    {
+      "id": "b10",
+      "type": "short",
+      "prompt": "(10) take",
+      "accepted": [
+        "took"
+      ],
+      "points": 3
+    },
+    {
+      "id": "partC",
+      "type": "section",
+      "title": "Part C · Find and fix the mistake (20 points, 4 each)",
+      "prompt": "Four sentences have one mistake. One sentence is correct. Write the correct sentence. If the sentence is already correct, write: correct"
+    },
+    {
+      "id": "c1",
+      "type": "short",
+      "prompt": "When I was arrive at school, the bell was ringing.",
+      "accepted": [
+        "When I arrived at school, the bell was ringing."
+      ],
+      "points": 4
+    },
+    {
+      "id": "c2",
+      "type": "short",
+      "prompt": "Where you were going at 8 o'clock last night?",
+      "accepted": [
+        "Where were you going at 8 o'clock last night?",
+        "Where were you going at eight o'clock last night?"
+      ],
+      "points": 4
+    },
+    {
+      "id": "c3",
+      "type": "short",
+      "prompt": "While we were playing football, it was starting to rain.",
+      "accepted": [
+        "While we were playing football, it started to rain."
+      ],
+      "points": 4
+    },
+    {
+      "id": "c4",
+      "type": "short",
+      "prompt": "I was having dinner when you called.",
+      "accepted": [
+        "correct",
+        "it's correct",
+        "it is correct"
+      ],
+      "points": 4
+    },
+    {
+      "id": "c5",
+      "type": "short",
+      "prompt": "She was wanting a new phone for her birthday.",
+      "accepted": [
+        "She wanted a new phone for her birthday."
+      ],
+      "points": 4
+    },
+    {
+      "id": "partD",
+      "type": "section",
+      "title": "Part D · Write it yourself (10 points)",
+      "prompt": "D1. Make one sentence with when or while. Choose the tenses yourself."
+    },
+    {
+      "id": "d1",
+      "type": "long",
+      "prompt": "my brother / sleep → the fire alarm / go off",
+      "points": 2,
+      "modelAnswer": "My brother was sleeping when the fire alarm went off. / The fire alarm went off while my brother was sleeping.\n2 points: both tenses right. 1 point: one verb wrong or a form error. 0: both wrong."
+    },
+    {
+      "id": "d2",
+      "type": "long",
+      "prompt": "I / do my homework → my parents / watch the news",
+      "points": 2,
+      "modelAnswer": "While I was doing my homework, my parents were watching the news. (\"When I was doing…, my parents were watching…\" is acceptable.)\n2 points: both tenses right. 1 point: one verb wrong or a form error. 0: both wrong."
+    },
+    {
+      "id": "d3",
+      "type": "long",
+      "title": "D2. Yesterday at 7:30 a.m. (6 points)",
+      "prompt": "Write three sentences about your home yesterday at 7:30 a.m. Describe what people were doing, and one thing that happened. Use when or while at least once.",
+      "points": 6,
+      "modelAnswer": "At 7:30 my mum was making coffee and my sister was looking for her shoes. My dad was reading the news on his phone. While I was eating breakfast, the cat jumped on the table and knocked over my juice.\n\nRubric: Past Progressive describing the scene (2) · Past Simple for something that happened (2) · when/while used correctly (1) · three sentences, no form errors (1)."
+    }
+  ]
+}
