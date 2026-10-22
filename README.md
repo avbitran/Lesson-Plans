@@ -8,4 +8,4 @@ The PDFs are A4 and are generated from the HTML in each lesson's `print/` folder
 
 ## Online tests
 
-[`online-tests/`](online-tests/) is a small website for giving tests online: read-aloud, recorded voice answers, student logins, submission and grading, and an exam mode that logs (and can pause the test) whenever a student leaves it. See its [README](online-tests/README.md) to run it. The Past Simple vs. Past Progressive quiz is included as an importable sample.
+[`apps-script/`](apps-script/) is a free online test system that runs in your school Google account (Google Apps Script). Students sign in with their school accounts, and it has read-aloud, recorded voice answers, grading, and an exam mode that logs (and can pause the test) whenever a student leaves it. See its [README](apps-script/README.md) for the 15-minute setup. The Past Simple vs. Past Progressive quiz is included as an importable sample.

@@ -1,0 +1,9 @@
+{
+  "name": "online-tests-apps-script",
+  "private": true,
+  "description": "Online tests on Google Apps Script: read-aloud, voice answers, school Google sign-in, grading, exam mode.",
+  "scripts": {
+    "build": "node build.js",
+    "test": "node --test test/*.test.js"
+  }
+}

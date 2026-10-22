@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Voice answer</title>
+  <!--
+    The pop-up voice recorder for Online Tests. Google Apps Script pages are not
+    allowed to use the microphone, so the test opens this page (served by
+    GitHub Pages) in a small window. It records, then sends the audio back to
+    the test with postMessage and closes. Nothing is uploaded from here.
+  -->
+  <style>
+    :root { --bg: #f6f5f1; --surface: #fff; --text: #1d1d1f; --muted: #6b6b70; --line: #deddd6; --accent: #2456c9; --danger: #b3261e; --ok: #1b7a43; color-scheme: light; }
+    @media (prefers-color-scheme: dark) {
+      :root { --bg: #17181b; --surface: #212226; --text: #ececef; --muted: #a0a0a8; --line: #36373d; --accent: #7aa2ff; --danger: #ff8a80; --ok: #6fd39a; color-scheme: dark; }
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--text); font: 18px/1.5 system-ui, -apple-system, 'Segoe UI', Roboto, 'Noto Sans', Arial, sans-serif; }
+    main { padding: 20px 16px; max-width: 460px; margin: 0 auto; display: flex; flex-direction: column; gap: 14px; }
+    h1 { font-size: 1.2rem; margin: 0; }
+    .prompt { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; white-space: pre-wrap; }
+    .muted { color: var(--muted); font-size: .9rem; }
+    .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+    button { font: inherit; font-weight: 600; padding: .7rem 1.2rem; border-radius: 10px; border: 1px solid var(--line); background: var(--surface); color: var(--text); cursor: pointer; }
+    button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+    .rec { background: var(--danger); border-color: var(--danger); color: #fff; font-size: 1.1rem; }
+    .send { background: var(--accent); border-color: var(--accent); color: #fff; }
+    .timer { font-variant-numeric: tabular-nums; font-weight: 700; font-size: 1.4rem; }
+    .dot { width: .8em; height: .8em; border-radius: 50%; background: var(--danger); display: inline-block; animation: pulse 1s infinite; }
+    @keyframes pulse { 50% { opacity: .3; } }
+    .error { color: var(--danger); font-weight: 600; }
+    audio { width: 100%; }
+    [hidden] { display: none !important; }
+  </style>
+</head>
+<body>
+<main>
+  <h1 id="title">Record your answer</h1>
+  <div class="prompt" id="prompt" hidden></div>
+  <p class="error" id="error" role="alert" hidden></p>
+
+  <div id="idle" class="row">
+    <button class="rec" id="start">🎤 Start recording</button>
+  </div>
+
+  <div id="recording" class="row" hidden>
+    <span class="dot"></span><span class="timer" id="timer">0:00</span>
+    <button id="stop">⏹ Stop</button>
+  </div>
+
+  <div id="review" hidden>
+    <audio id="player" controls></audio>
+    <div class="row" style="margin-top:10px">
+      <button class="send" id="send">✓ Use this recording</button>
+      <button id="again">Record again</button>
+    </div>
+  </div>
+
+  <p class="muted" id="hint">The first time, allow the microphone when the browser asks. Recordings can be up to 5 minutes.</p>
+</main>
+<script>
+(function () {
+  'use strict';
+  var MAX_SECONDS = 300;
+  var MIME_CANDIDATES = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg;codecs=opus'];
+  var $ = function (id) { return document.getElementById(id); };
+  var opener = window.opener;
+  var testOrigin = null; // learned from the test's hello message
+  var stream = null, rec = null, blob = null, seconds = 0, timer = null, startedAt = 0;
+
+  function show(id) {
+    ['idle', 'recording', 'review'].forEach(function (x) { $(x).hidden = x !== id; });
+  }
+  function fail(msg) {
+    $('error').textContent = msg;
+    $('error').hidden = false;
+  }
+  function fmt(s) {
+    s = Math.round(s);
+    return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
+  }
+  // Only Google Apps Script pages may talk to this recorder.
+  function trusted(origin) {
+    return /^https:\/\/[a-z0-9-]+\.googleusercontent\.com$/.test(origin) || /^https:\/\/script\.google\.com$/.test(origin);
+  }
+  function tell(msg) {
+    if (opener && !opener.closed) opener.postMessage(msg, testOrigin || '*');
+  }
+
+  if (!opener) {
+    fail('Open this from your test: press 🎤 Record my answer next to a question.');
+    $('start').disabled = true;
+  } else {
+    // Announce ourselves; the test answers with the question text.
+    tell({ type: 'recorder-ready' });
+  }
+
+  window.addEventListener('message', function (e) {
+    if (e.source !== opener || !trusted(e.origin)) return;
+    var m = e.data || {};
+    if (m.type === 'recorder-hello') {
+      testOrigin = e.origin;
+      if (m.number) $('title').textContent = 'Record your answer to question ' + m.number;
+      if (m.prompt) { $('prompt').textContent = m.prompt; $('prompt').hidden = false; }
+    }
+  });
+
+  // Let the test know where focus is, so using this window doesn't count as
+  // leaving the test, but going somewhere else from here does.
+  window.addEventListener('focus', function () { tell({ type: 'recorder-focus' }); });
+  window.addEventListener('blur', function () { tell({ type: 'recorder-blur' }); });
+
+  $('start').addEventListener('click', async function () {
+    $('error').hidden = true;
+    try {
+      if (!stream) stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+    } catch (err) {
+      return fail('The microphone is blocked. Click the microphone icon in the address bar to allow it, or ask your teacher for help.');
+    }
+    var mimeType = MIME_CANDIDATES.find(function (m) { return window.MediaRecorder && MediaRecorder.isTypeSupported(m); }) || '';
+    var parts = [];
+    rec = new MediaRecorder(stream, mimeType ? { mimeType: mimeType } : undefined);
+    rec.ondataavailable = function (ev) { if (ev.data.size) parts.push(ev.data); };
+    rec.onstop = function () {
+      clearInterval(timer);
+      seconds = (performance.now() - startedAt) / 1000;
+      blob = new Blob(parts, { type: (rec.mimeType || mimeType || 'audio/webm').split(';')[0] });
+      $('player').src = URL.createObjectURL(blob);
+      show('review');
+    };
+    rec.start(1000);
+    startedAt = performance.now();
+    $('timer').textContent = '0:00';
+    timer = setInterval(function () {
+      var s = (performance.now() - startedAt) / 1000;
+      $('timer').textContent = fmt(s);
+      if (s >= MAX_SECONDS) $('stop').click();
+    }, 250);
+    show('recording');
+  });
+
+  $('stop').addEventListener('click', function () {
+    if (rec && rec.state === 'recording') rec.stop();
+  });
+
+  $('again').addEventListener('click', function () {
+    $('player').removeAttribute('src');
+    blob = null;
+    $('start').click();
+  });
+
+  $('send').addEventListener('click', function () {
+    if (!blob) return;
+    if (!testOrigin) return fail('Lost contact with the test. Close this window and press 🎤 again.');
+    $('send').disabled = true;
+    $('send').textContent = 'Sending…';
+    var reader = new FileReader();
+    reader.onload = function () {
+      var data = String(reader.result).split(',')[1] || '';
+      opener.postMessage({ type: 'recorder-audio', data: data, mime: blob.type, duration: Math.round(seconds * 10) / 10 }, testOrigin);
+      if (stream) stream.getTracks().forEach(function (t) { t.stop(); });
+      window.close();
+    };
+    reader.readAsDataURL(blob);
+  });
+})();
+</script>
+</body>
+</html>

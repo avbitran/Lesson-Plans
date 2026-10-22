@@ -1,7 +1,7 @@
-import { api, h, clear, header, requireUser, toast, modal, fmtDate, fmtTime, fmtDuration, LETTERS, isRtl } from './common.js';
+// The teacher's pages: tests, editor, live results, grading, students.
 
+(function () {
 const app = document.getElementById('app');
-let user;
 let refreshTimer = null;
 
 const NAV = [
@@ -10,7 +10,7 @@ const NAV = [
 ];
 
 function page(...children) {
-  clear(app, header(user, NAV), h('main', { class: 'wrap' }, children));
+  clear(app, header(NAV), h('main', { class: 'wrap' }, children));
 }
 
 const STATUS_LABEL = { draft: 'Draft', open: 'Open', closed: 'Closed' };
@@ -72,7 +72,7 @@ async function testsPage() {
       : h(
           'div',
           { class: 'card' },
-          h('p', { text: 'No tests yet. Create one, or import the sample test from the samples folder.' }),
+          h('p', { text: 'No tests yet. Create one, or import the sample test (samples folder in the GitHub repo).' }),
         ),
   );
 }
@@ -303,11 +303,13 @@ async function editorPage(id) {
     touch();
   });
 
+  // Downloads are unreliable inside Google's frame, so show the JSON to copy.
   const exportJson = () => {
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-    const a = h('a', { href: URL.createObjectURL(blob), download: `${data.title || 'test'}.json` });
-    a.click();
-    URL.revokeObjectURL(a.href);
+    const ta = h('textarea', { rows: 14, readonly: true, value: JSON.stringify(data, null, 2) });
+    modal('Test as JSON', h('div', {}, h('p', { class: 'muted', text: 'Copy this into a .json file to keep a backup or share the test with another teacher.' }), ta), [
+      ['Copy', () => (ta.select(), document.execCommand('copy'), toast('Copied.', 'ok'), false)],
+      ['Close', null, 'btn-primary'],
+    ]);
   };
 
   page(
@@ -318,7 +320,7 @@ async function editorPage(id) {
       h(
         'div',
         { class: 'row' },
-        id !== 'new' ? h('button', { class: 'btn', onclick: async () => (!dirty || (await saveTest())) && window.open(`/take?preview=${id}`, '_blank') }, 'Preview as student') : null,
+        id !== 'new' ? h('button', { class: 'btn', onclick: async () => { if (!dirty || (await saveTest())) location.hash = `#preview/${id}`; } }, 'Preview as student') : null,
         id !== 'new' ? h('button', { class: 'btn', onclick: exportJson }, 'Export JSON') : null,
         h('button', { class: 'btn btn-primary', onclick: saveTest }, 'Save'),
       ),
@@ -473,11 +475,23 @@ async function resultsPage(id) {
         { class: 'row' },
         test.status !== 'open' ? statusBtn('open', 'Open for students') : statusBtn('closed', 'Close test'),
         h('a', { class: 'btn', href: `#edit/${id}` }, 'Edit'),
-        h('a', { class: 'btn', href: `/api/tests/${id}/export.csv` }, 'Download CSV'),
+        h('button', {
+          class: 'btn',
+          onclick: async (e) => {
+            e.target.disabled = true;
+            try {
+              const { url } = await api('POST', `/api/tests/${id}/export`);
+              modal('Results copied to Google Sheets', h('p', {}, h('a', { href: url, target: '_blank', rel: 'noopener' }, 'Open the results sheet')));
+            } catch (err) {
+              toast(err.message, 'error');
+            }
+            e.target.disabled = false;
+          },
+        }, 'Results to Google Sheets'),
       ),
     ),
     test.status === 'open'
-      ? h('p', { class: 'muted', text: `Students log in at ${location.origin} and see this test on their page.` })
+      ? h('p', { class: 'muted', text: 'Students open the app link (the same link you use) and see this test on their page.' })
       : null,
     h(
       'table',
@@ -492,7 +506,7 @@ async function resultsPage(id) {
           return h(
             'tr',
             { class: a.status === 'locked' ? 'row-alert' : '' },
-            h('td', {}, h('strong', { text: a.name }), h('div', { class: 'muted small', text: a.username })),
+            h('td', {}, h('strong', { text: a.name }), h('div', { class: 'muted small', text: a.email })),
             h('td', { text: a.className }),
             h('td', {}, h('span', { class: `badge badge-${a.status}`, text: ATTEMPT_LABEL[a.status] }), a.submitReason && a.submitReason !== 'student' ? h('div', { class: 'small muted', text: { time: 'time ran out', violations: 'left too many times', teacher: 'ended by you' }[a.submitReason] }) : null),
             h('td', { text: working ? `${a.answered}/${a.questionCount}${left !== null ? ` · ${fmtDuration(left)} left` : ''}` : fmtDate(a.submittedAt) }),
@@ -512,9 +526,9 @@ async function resultsPage(id) {
         notStarted.map((u) => h('tr', { class: 'muted' }, h('td', { text: u.name }), h('td', { text: u.className }), h('td', { text: 'Not started' }), h('td'), h('td'), h('td'), h('td'))),
       ),
     ),
-    active.length ? h('p', { class: 'small muted', text: 'This page refreshes every 10 seconds while students are working.' }) : null,
+    active.length ? h('p', { class: 'small muted', text: 'This page refreshes every 20 seconds while students are working.' }) : null,
   );
-  if (active.length) refreshTimer = setTimeout(() => location.hash === `#results/${id}` && route(), 10000);
+  if (active.length) refreshTimer = setTimeout(() => location.hash === `#results/${id}` && route(), 20000);
 }
 
 // ==================================================================== grading
@@ -524,11 +538,12 @@ const EVENT_LABEL = {
   left: 'Left the test',
   returned: 'Came back',
   fullscreen_exit: 'Left full screen',
-  fullscreen_refused: 'Full screen was blocked by the browser',
+  fullscreen_refused: 'Full screen is not available (test continued without it)',
   paste_blocked: 'Tried to paste',
   copy_blocked: 'Tried to copy',
   shortcut_blocked: 'Pressed a blocked shortcut',
   reopened: 'Opened the test in another window/device',
+  recorder_opened: 'Opened the voice recorder',
   locked: 'Test paused',
   unlocked: 'You unlocked the test',
   submitted: 'Submitted',
@@ -591,9 +606,7 @@ async function gradePage(attemptId) {
         needs ? h('span', { class: 'badge badge-warn', text: 'Check' }) : null,
       ),
       answerView(q),
-      recs[q.id]
-        ? h('div', { class: 'record-done' }, h('span', { class: 'small muted', text: `Voice answer (${fmtDuration(recs[q.id].duration || 0)})` }), h('audio', { controls: true, preload: 'metadata', src: `/api/recordings/${recs[q.id].id}` }))
-        : null,
+      recs[q.id] ? recordingPlayer(recs[q.id].id, `Play voice answer (${fmtDuration(recs[q.id].duration || 0)})`) : null,
       q.type === 'short' ? h('p', { class: 'small muted', text: `Accepted: ${q.accepted.join(' · ') || '(none set)'}` }) : null,
       q.type === 'long' && q.modelAnswer ? h('details', { class: 'small' }, h('summary', { text: 'Model answer' }), h('p', { class: 'pre', text: q.modelAnswer })) : null,
       h(
@@ -670,46 +683,36 @@ async function gradePage(attemptId) {
 
 // ==================================================================== people
 
-function credentialsSheet(created) {
-  const sheet = h(
-    'div',
-    { class: 'credentials' },
-    created.map((c) =>
-      h('div', { class: 'cred' }, h('strong', { text: c.name }), c.className ? h('span', { class: 'muted', text: ` · ${c.className}` }) : null, h('div', {}, 'Site: ', h('code', { text: location.origin })), h('div', {}, 'Username: ', h('code', { text: c.username })), h('div', {}, 'Password: ', h('code', { text: c.password }))),
-    ),
-  );
-  modal('Login details', h('div', {}, h('p', { class: 'strong', text: 'Print or copy these now. Passwords are not shown again (you can reset them later).' }), sheet), [
-    ['Print', () => (document.body.classList.add('printing-creds'), window.print(), document.body.classList.remove('printing-creds'), false)],
-    ['Done', () => route(), 'btn-primary'],
-  ]);
-}
-
 async function peoplePage() {
-  const { users } = await api('GET', '/api/users');
-  const students = users.filter((u) => u.role === 'student');
-  const teachers = users.filter((u) => u.role === 'teacher');
+  const [{ students, teachers }, settings] = await Promise.all([api('GET', '/api/users'), api('GET', '/api/settings')]);
   const classes = [...new Set(students.map((s) => s.className).filter(Boolean))].sort();
   let filter = '';
   try {
     filter = sessionStorage.getItem('classFilter') || '';
-  } catch {}
+  } catch (e) {}
 
-  const bulk = h('textarea', { rows: 6, placeholder: 'Dana Levi, 10-3\nYoni Cohen, 10-3\nNoa Mizrahi, 10-4' });
+  const bulk = h('textarea', { rows: 6, placeholder: 'dana.levi@school.org, Dana Levi, 10-3\nyoni.cohen@school.org, Yoni Cohen, 10-3' });
   const addStudents = async () => {
     const people = bulk.value
       .split('\n')
-      .map((line) => line.split(/[,\t]/).map((x) => x.trim()))
-      .filter(([name]) => name)
-      .map(([name, className]) => ({ name, className }));
-    if (!people.length) return toast('Write one student per line: name, class', 'warn');
-    const { created } = await api('POST', '/api/users/bulk', { people });
-    credentialsSheet(created);
+      .map((line) => line.split(/[,\t;]/).map((x) => x.trim()))
+      .filter(([email]) => email)
+      .map(([email, name, className]) => ({ email, name, className }));
+    if (!people.length) return toast('Write one student per line: email, name, class', 'warn');
+    try {
+      const r = await api('POST', '/api/students/bulk', { people });
+      toast(`Added or updated ${r.added} student${r.added === 1 ? '' : 's'}.`, 'ok');
+      if (r.skipped.length) modal('Some lines were skipped', h('ul', {}, r.skipped.map((x) => h('li', { text: x }))));
+      route();
+    } catch (e) {
+      toast(e.message, 'error');
+    }
   };
 
-  const update = async (u, patch) => {
+  const update = async (s, patch) => {
     try {
-      await api('PUT', `/api/users/${u.id}`, patch);
-      Object.assign(u, patch);
+      await api('PUT', `/api/students/${encodeURIComponent(s.id)}`, patch);
+      Object.assign(s, patch);
       toast('Saved.', 'ok');
     } catch (e) {
       toast(e.message, 'error');
@@ -723,13 +726,14 @@ async function peoplePage() {
       students
         .filter((s) => !filter || s.className === filter)
         .map((s) => {
+          const name = h('input', { value: s.name });
+          name.addEventListener('change', () => update(s, { name: name.value }));
           const className = h('input', { value: s.className, class: 'narrow-input' });
           className.addEventListener('change', () => update(s, { className: className.value }));
           return h(
             'tr',
             {},
-            h('td', {}, h('strong', { text: s.name })),
-            h('td', {}, h('code', { text: s.username })),
+            h('td', {}, name, h('div', { class: 'muted small', text: s.email })),
             h('td', {}, className),
             h('td', {}, h('input', { type: 'checkbox', checked: s.readAloud, 'aria-label': 'Read-aloud', onchange: (e) => update(s, { readAloud: e.target.checked }) })),
             h('td', {}, h('input', { type: 'checkbox', checked: s.voiceAnswers, 'aria-label': 'Voice answers', onchange: (e) => update(s, { voiceAnswers: e.target.checked }) })),
@@ -740,22 +744,15 @@ async function peoplePage() {
             ),
             h(
               'td',
-              { class: 'row tight' },
-              h('button', {
-                class: 'btn btn-ghost',
-                onclick: async () => {
-                  const r = await api('POST', `/api/users/${s.id}/reset-password`);
-                  credentialsSheet([{ name: s.name, className: s.className, username: r.username, password: r.password }]);
-                },
-              }, 'Reset password'),
+              {},
               h('button', {
                 class: 'btn btn-ghost danger',
                 onclick: () =>
-                  modal(`Delete ${s.name}?`, h('p', { text: 'Their test answers and recordings are deleted too.' }), [
+                  modal(`Remove ${s.name}?`, h('p', { text: 'Their test answers and recordings are deleted too.' }), [
                     ['Cancel', null],
-                    ['Delete', async () => (await api('DELETE', `/api/users/${s.id}`), route()), 'btn-danger'],
+                    ['Remove', async () => (await api('DELETE', `/api/students/${encodeURIComponent(s.id)}`), route()), 'btn-danger'],
                   ]),
-              }, 'Delete'),
+              }, 'Remove'),
             ),
           );
         }),
@@ -768,7 +765,7 @@ async function peoplePage() {
         filter = e.target.value;
         try {
           sessionStorage.setItem('classFilter', filter);
-        } catch {}
+        } catch (err) {}
         draw();
       },
     },
@@ -776,40 +773,93 @@ async function peoplePage() {
     classes.map((c) => h('option', { value: c, selected: c === filter }, c)),
   );
 
-  const teacherName = h('input', { placeholder: 'Name' });
+  const teacherEmail = h('input', { type: 'email', placeholder: 'colleague@school.org', class: 'grow' });
+  const recorderUrl = h('input', { value: settings.recorderUrl, class: 'grow' });
+
   page(
     h('div', { class: 'page-head' }, h('h1', { text: 'Students' }), filterSel),
-    h(
-      'table',
-      { class: 'table' },
-      h('thead', {}, h('tr', {}, ['Name', 'Username', 'Class', 'Read-aloud', 'Voice answers', 'Extra time', ''].map((x) => h('th', { text: x })))),
-      tbody,
-    ),
+    students.length
+      ? h(
+          'table',
+          { class: 'table' },
+          h('thead', {}, h('tr', {}, ['Name', 'Class', 'Read-aloud', 'Voice answers', 'Extra time', ''].map((x) => h('th', { text: x })))),
+          tbody,
+        )
+      : h('p', { class: 'muted', text: 'No students yet. Add them below.' }),
     h(
       'div',
       { class: 'card form' },
       h('h2', { text: 'Add students' }),
-      h('label', {}, 'One per line: name, class', bulk),
-      h('div', { class: 'row end' }, h('button', { class: 'btn btn-primary', onclick: addStudents }, 'Create accounts')),
+      h('p', { class: 'muted', text: 'Students sign in with their school Google account, so there are no passwords. Paste one per line: school email, name, class. Adding an email that is already on the list updates its name and class.' }),
+      h('label', {}, 'email, name, class', bulk),
+      h('div', { class: 'row end' }, h('button', { class: 'btn btn-primary', onclick: addStudents }, 'Add students')),
     ),
     h(
       'details',
       { class: 'card form' },
       h('summary', { class: 'strong', text: `Teachers (${teachers.length})` }),
-      h('p', { class: 'muted', text: 'Every teacher account can see and grade all tests and students.' }),
-      h('ul', {}, teachers.map((t) => h('li', {}, `${t.name} `, h('code', { text: t.username })))),
+      h('p', { class: 'muted', text: 'Every teacher can see and grade all tests and students.' }),
+      h(
+        'ul',
+        {},
+        teachers.map((t) =>
+          h(
+            'li',
+            {},
+            t.email,
+            t.owner
+              ? h('span', { class: 'muted', text: ' (owner)' })
+              : h('button', { class: 'btn btn-ghost danger', onclick: async () => (await api('DELETE', `/api/teachers/${encodeURIComponent(t.id)}`), route()) }, 'Remove'),
+          ),
+        ),
+      ),
       h(
         'div',
         { class: 'row' },
-        teacherName,
+        teacherEmail,
         h('button', {
           class: 'btn',
           onclick: async () => {
-            if (!teacherName.value.trim()) return;
-            const { created } = await api('POST', '/api/users/bulk', { role: 'teacher', people: [{ name: teacherName.value }] });
-            credentialsSheet(created);
+            try {
+              await api('POST', '/api/teachers', { email: teacherEmail.value });
+              route();
+            } catch (e) {
+              toast(e.message, 'error');
+            }
           },
         }, 'Add teacher'),
+      ),
+    ),
+    h(
+      'details',
+      { class: 'card form' },
+      h('summary', { class: 'strong', text: 'Settings' }),
+      h(
+        'p',
+        {},
+        'All data is kept in ',
+        h('a', { href: settings.spreadsheetUrl, target: '_blank', rel: 'noopener' }, 'this Google Sheet'),
+        ' and voice answers in ',
+        h('a', { href: settings.recordingsUrl, target: '_blank', rel: 'noopener' }, 'this Drive folder'),
+        '. Don’t rename or reorder the sheet’s columns.',
+      ),
+      h('label', {}, 'Voice recorder page (the pop-up students record in)', recorderUrl),
+      h(
+        'div',
+        { class: 'row end' },
+        h('button', {
+          class: 'btn',
+          onclick: async () => {
+            try {
+              const r = await api('PUT', '/api/settings', { recorderUrl: recorderUrl.value });
+              BOOT.recorderUrl = r.recorderUrl;
+              recorderUrl.value = r.recorderUrl;
+              toast('Saved.', 'ok');
+            } catch (e) {
+              toast(e.message, 'error');
+            }
+          },
+        }, 'Save'),
       ),
     ),
   );
@@ -818,13 +868,15 @@ async function peoplePage() {
 
 // ==================================================================== router
 
-let currentHash = null;
-async function route() {
+function route() {
+  App.route();
+}
+
+App.teacherRoute = async function (name, arg) {
   clearTimeout(refreshTimer);
-  const hash = location.hash || '#tests';
-  currentHash = hash;
-  const [name, arg] = hash.slice(1).split('/');
+  leaveGuard = null;
   try {
+    if (name === 'preview') return App.take(arg, { preview: true });
     if (name === 'edit') await editorPage(arg);
     else if (name === 'results') await resultsPage(arg);
     else if (name === 'grade') await gradePage(arg);
@@ -833,21 +885,7 @@ async function route() {
   } catch (e) {
     page(h('p', { class: 'error', text: e.message }));
   }
-}
+};
 
-window.addEventListener('hashchange', () => {
-  if (leaveGuard?.() && !confirm('You have unsaved changes. Leave anyway?')) {
-    history.replaceState(null, '', currentHash);
-    return;
-  }
-  leaveGuard = null;
-  route();
-});
-window.addEventListener('beforeunload', (e) => {
-  if (leaveGuard?.()) e.preventDefault();
-});
-
-(async () => {
-  user = await requireUser('teacher');
-  route();
+App.teacherHasUnsaved = () => !!(leaveGuard && leaveGuard());
 })();

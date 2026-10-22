@@ -1,4 +1,3 @@
-'use strict';
 // Test definitions: validation, the student-safe view, and auto-grading.
 
 const QUESTION_TYPES = ['section', 'mc', 'short', 'long'];
@@ -144,13 +143,6 @@ function totalScore(test, auto, grading) {
   return Math.round(total * 100) / 100;
 }
 
-module.exports = {
-  ValidationError,
-  normalizeTest,
-  studentView,
-  maxScore,
-  normalizeAnswer,
-  autoGrade,
-  totalScore,
-  LANGUAGES,
-};
+if (typeof module !== 'undefined') {
+  module.exports = { ValidationError, normalizeTest, studentView, maxScore, normalizeAnswer, autoGrade, totalScore, LANGUAGES };
+}
