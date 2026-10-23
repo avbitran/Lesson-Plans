@@ -1,0 +1,403 @@
+<meta charset="utf-8">
+<title>מרכיבים קואליציה</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Secular+One&family=IBM+Plex+Sans+Hebrew:wght@400;500;700&display=swap">
+<style>
+/* Layout: a sticky 120-seat meter on top, four numbered steps below; parties shown as ballot slips (פתקי הצבעה). */
+:root{
+  --paper:#f4f2ec;      /* page: polling-booth paper */
+  --slip:#ffffff;       /* ballot slip */
+  --ink:#16181d;        /* ballot ink */
+  --muted:#5d6370;
+  --line:#d9d5ca;
+  --accent:#1747a6;     /* envelope blue */
+  --accent-ink:#ffffff;
+  --soft:#e9edf6;
+  --ok:#1d7a46;
+  --warn:#a5560f;
+  --bad:#b4233a;
+  --shadow:0 1px 0 #0000000d,0 6px 18px #1b1f2a14;
+  --f-display:"Secular One","IBM Plex Sans Hebrew",Arial,sans-serif;
+  --f-body:"IBM Plex Sans Hebrew",Arial,"Noto Sans Hebrew",sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --paper:#14161b;--slip:#1d2028;--ink:#eef0f4;--muted:#a3a9b6;--line:#343846;
+  --accent:#7ea2ff;--accent-ink:#0d1220;--soft:#232a3c;--ok:#5fcf8d;--warn:#f0a55a;--bad:#ff7b8f;
+  --shadow:0 1px 0 #0000004d,0 6px 18px #00000059;color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#14161b;--slip:#1d2028;--ink:#eef0f4;--muted:#a3a9b6;--line:#343846;
+  --accent:#7ea2ff;--accent-ink:#0d1220;--soft:#232a3c;--ok:#5fcf8d;--warn:#f0a55a;--bad:#ff7b8f;
+  --shadow:0 1px 0 #0000004d,0 6px 18px #00000059;color-scheme:dark}
+
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--f-body);font-size:15px;line-height:1.55}
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:10;background:var(--slip)}
+.app{direction:rtl}
+.pad{padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+.inner{max-width:1180px;margin:0 auto}
+button,input,select{font:inherit;color:inherit}
+button{cursor:pointer}
+button:focus-visible,input:focus-visible,select:focus-visible,summary:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+/* Header + seat meter */
+.top{position:sticky;top:env(safe-area-inset-top,0px);z-index:5;background:var(--slip);border-bottom:1px solid var(--line)}
+.top .inner{padding-block:14px 12px;display:grid;gap:10px}
+.brandrow{display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-wrap:wrap}
+h1{font-family:var(--f-display);font-weight:400;font-size:clamp(24px,3.4vw,32px);margin:0;line-height:1.1;text-wrap:balance}
+.tag{color:var(--muted);font-size:13px}
+.meter{display:grid;gap:6px}
+.meter-bar{position:relative;height:22px;border-radius:5px;background:var(--soft);overflow:hidden;display:flex}
+.meter-bar span{height:100%;transition:width .25s}
+.meter-bar .mark{position:absolute;top:-2px;bottom:-2px;width:2px;background:var(--ink);right:calc(61/120*100%)}
+.meter-text{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;font-size:14px}
+.meter-text b{font-variant-numeric:tabular-nums}
+.status{font-weight:700}
+.status.ok{color:var(--ok)}.status.bad{color:var(--bad)}
+
+/* Steps */
+.steps{display:flex;gap:6px;overflow-x:auto;padding-bottom:2px;scrollbar-width:none}
+.step{flex:0 0 auto;border:1px solid var(--line);background:transparent;border-radius:999px;padding:7px 14px;font-weight:500;display:flex;gap:8px;align-items:center;white-space:nowrap}
+.step i{font-style:normal;font-family:var(--f-display);width:22px;height:22px;border-radius:50%;display:grid;place-items:center;background:var(--soft);font-size:13px}
+.step[aria-selected="true"]{background:var(--ink);color:var(--slip);border-color:var(--ink)}
+.step[aria-selected="true"] i{background:var(--slip);color:var(--ink)}
+
+main .inner{padding-block:22px 64px;display:grid;gap:18px}
+.intro{display:flex;justify-content:space-between;align-items:end;gap:14px;flex-wrap:wrap}
+.intro h2{font-family:var(--f-display);font-weight:400;font-size:24px;margin:0 0 4px}
+.intro p{margin:0;color:var(--muted);max-width:62ch}
+.row{display:flex;gap:8px;flex-wrap:wrap}
+.btn{border:1px solid var(--line);background:var(--slip);border-radius:8px;padding:8px 13px;font-weight:500}
+.btn:hover{border-color:var(--ink)}
+.btn.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+.btn.danger{color:var(--bad)}
+.btn.armed{background:var(--bad);color:#fff;border-color:var(--bad)}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.note{font-size:13px;color:var(--muted)}
+.warn-line{color:var(--warn);font-weight:500;font-size:14px}
+
+/* Ballot slips */
+.slips{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:14px}
+.slip{background:var(--slip);border:1px solid var(--line);border-radius:4px;box-shadow:var(--shadow);display:grid;grid-template-rows:auto 1fr auto;min-width:0;position:relative;transition:transform .15s,border-color .15s}
+.slip.in{border-color:var(--pc);outline:2px solid var(--pc);outline-offset:-1px}
+.slip-head{display:grid;grid-template-columns:auto 1fr;gap:12px;padding:14px 14px 10px;align-items:center}
+.letters{font-family:var(--f-display);font-size:34px;line-height:1;min-width:64px;text-align:center;padding:10px 6px;border:2px solid var(--ink);border-radius:3px;letter-spacing:.02em}
+.slip h3{margin:0;font-size:17px;line-height:1.3}
+.slip .lead{color:var(--muted);font-size:13px}
+.swatch{display:inline-block;width:10px;height:10px;border-radius:2px;background:var(--pc);margin-inline-end:6px;vertical-align:baseline}
+.slip-body{padding:0 14px 10px;display:grid;gap:10px;align-content:start}
+.seats{display:flex;align-items:center;justify-content:space-between;gap:8px;border-top:1px dashed var(--line);padding-top:10px}
+.seats label{font-size:13px;color:var(--muted)}
+.stepper{display:flex;align-items:center;border:1px solid var(--line);border-radius:7px;overflow:hidden}
+.stepper button{border:0;background:transparent;width:32px;height:32px;font-size:18px;line-height:1}
+.stepper button:hover{background:var(--soft)}
+.stepper input{width:42px;height:32px;border:0;border-inline:1px solid var(--line);text-align:center;background:transparent;font-variant-numeric:tabular-nums;font-weight:700;-moz-appearance:textfield}
+.stepper input::-webkit-inner-spin-button{-webkit-appearance:none}
+.below{font-size:12px;color:var(--warn)}
+details.list summary{cursor:pointer;font-size:13px;color:var(--accent);list-style:none}
+details.list summary::-webkit-details-marker{display:none}
+details.list ol{margin:8px 0 0;padding:0;list-style:none;display:grid;gap:2px;max-height:240px;overflow:auto;font-size:13.5px}
+details.list li{display:grid;grid-template-columns:28px 1fr auto;gap:6px;padding:3px 4px;border-radius:4px}
+details.list li.cut{color:var(--muted)}
+details.list li .r{font-variant-numeric:tabular-nums;color:var(--muted);text-align:center}
+details.list li .tagm{font-size:11px;color:var(--accent)}
+.join{border:0;border-top:1px solid var(--line);background:transparent;padding:12px;font-weight:700;border-radius:0 0 4px 4px;display:flex;justify-content:center;gap:8px;align-items:center}
+.join:hover{background:var(--soft)}
+.slip.in .join{background:var(--pc);color:#fff}
+
+/* Offices */
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:12px}
+.office{background:var(--slip);border:1px solid var(--line);border-radius:8px;padding:14px;display:grid;gap:10px;align-content:start;min-width:0}
+.office.closed{border-style:dashed;opacity:.75}
+.office.merged{border-style:dashed;border-color:var(--warn)}
+.office h4{margin:0;font-size:15.5px;line-height:1.35}
+.pill{justify-self:start;font-size:12px;padding:2px 9px;border-radius:999px;background:var(--soft);color:var(--muted)}
+.pill.on{color:var(--ok)}
+.office select,.office input[type=search]{width:100%;min-width:0;border:1px solid var(--line);border-radius:7px;padding:8px 10px;background:var(--paper)}
+.minister{display:flex;align-items:center;gap:10px;padding:8px;border-radius:7px;background:var(--soft)}
+.avatar{width:38px;height:38px;flex:none;border-radius:50%;display:grid;place-items:center;color:#fff;font-weight:700;font-size:14px;background:var(--pc)}
+.minister b{display:block;font-size:14.5px;line-height:1.3}
+.minister small{color:var(--muted);font-size:12.5px}
+.vacant{color:var(--muted);font-size:13.5px;padding:8px;border:1px dashed var(--line);border-radius:7px}
+.results{display:grid;gap:4px;max-height:220px;overflow:auto}
+.results:empty{display:none}
+.cand{display:flex;align-items:center;justify-content:space-between;gap:8px;text-align:right;border:1px solid var(--line);background:var(--slip);border-radius:7px;padding:7px 9px}
+.cand:hover{border-color:var(--ink)}
+.cand small{color:var(--muted);flex:none;font-size:12px}
+.cand .who{display:flex;align-items:center;gap:8px;min-width:0}
+.cand .who .avatar{width:26px;height:26px;font-size:11px}
+.linkbtn{border:0;background:transparent;color:var(--accent);padding:0;font-size:13px;justify-self:start}
+.linkbtn.red{color:var(--bad)}
+.empty{padding:28px;text-align:center;border:1px dashed var(--line);border-radius:10px;color:var(--muted);background:var(--slip)}
+
+/* Summary */
+.panel{background:var(--slip);border:1px solid var(--line);border-radius:10px;padding:18px;display:grid;gap:12px;min-width:0}
+.panel h3{margin:0;font-family:var(--f-display);font-weight:400;font-size:20px}
+.tablewrap{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:14px;min-width:520px}
+th,td{text-align:right;padding:8px 10px;border-bottom:1px solid var(--line)}
+th{font-size:12px;color:var(--muted);font-weight:500;letter-spacing:.02em}
+td.n{font-variant-numeric:tabular-nums}
+.share{display:flex;align-items:center;gap:8px}
+.share .bar{flex:1;height:8px;background:var(--soft);border-radius:4px;position:relative;min-width:60px}
+.share .bar span{position:absolute;inset:0 0 0 auto;border-radius:4px;background:var(--pc)}
+.gap-pos{color:var(--ok)}.gap-neg{color:var(--bad)}
+
+/* Dialog + toast */
+.overlay{position:fixed;inset:0;background:#0b0f1a8c;z-index:50;display:flex;align-items:center;justify-content:center;padding:max(16px,env(safe-area-inset-top,0px)) max(16px,env(safe-area-inset-right,0px)) max(16px,env(safe-area-inset-bottom,0px)) max(16px,env(safe-area-inset-left,0px))}
+.dialog{direction:rtl;background:var(--slip);color:var(--ink);border-radius:12px;padding:22px;width:min(100%,420px);display:grid;gap:12px;box-shadow:0 20px 60px #0006}
+.dialog h2{margin:0;font-family:var(--f-display);font-weight:400;font-size:24px}
+.dialog p{margin:0;color:var(--muted)}
+.toast{position:fixed;bottom:calc(16px + env(safe-area-inset-bottom,0px));left:50%;transform:translateX(-50%);z-index:40;background:var(--ink);color:var(--slip);padding:10px 14px;border-radius:9px;display:flex;gap:12px;align-items:center;max-width:calc(100% - 32px);direction:rtl;font-size:14px}
+.toast button{border:0;background:transparent;color:inherit;text-decoration:underline;font-weight:700}
+.foot{font-size:12.5px;color:var(--muted);max-width:80ch}
+.foot a{color:var(--accent)}
+@media (max-width:560px){.letters{font-size:28px;min-width:54px}.slips{grid-template-columns:1fr}.tag,.meter-text .note{display:none}.top .inner{padding-block:10px 8px;gap:8px}}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+
+<div class="app" id="app">
+  <header class="top pad">
+    <div class="inner">
+      <div class="brandrow">
+        <h1>מרכיבים קואליציה</h1>
+        <span class="tag">הכנסת ה-26 · בחירות 27.10.2026 · בוחרים מפלגות, מחלקים תיקים</span>
+      </div>
+      <div class="meter" aria-live="polite">
+        <div class="meter-bar" id="meterBar" role="img" aria-label="מנדטי הקואליציה מתוך 120"></div>
+        <div class="meter-text"><span><b id="coalSeats">0</b> מנדטים בקואליציה · <span class="status" id="majority"></span></span><span class="note">הקו מסמן 61</span></div>
+      </div>
+      <nav class="steps" role="tablist" id="steps">
+        <button class="step" role="tab" data-tab="parties"><i>1</i>בחירת מפלגות</button>
+        <button class="step" role="tab" data-tab="structure"><i>2</i>מבנה המשרדים</button>
+        <button class="step" role="tab" data-tab="offices"><i>3</i>מינוי שרים</button>
+        <button class="step" role="tab" data-tab="summary"><i>4</i>הממשלה שלי</button>
+      </nav>
+    </div>
+  </header>
+  <main class="pad"><div class="inner" id="content"></div></main>
+</div>
+
+<script>
+// ---------- Data ----------
+// Seats: average of the five latest polls listed on Wikipedia (Ch.14 ×2, Ch.13, Ch.12, Zman Yisrael; 21–22 Oct 2026),
+// with lists averaging under the threshold set to 0 and the rest scaled to 120 by largest remainder.
+// Lists: as submitted to the Central Elections Committee (Hebrew Wikipedia, "הבחירות לכנסת העשרים ושש").
+const PARTIES=[
+ {id:'lik',name:'הליכוד',letters:'מחל',leader:'בנימין נתניהו',seats:24,color:'#2456b5',list:['בנימין נתניהו','אלי כהן','אמיר אוחנה','יריב לוין','מירי רגב','ישראל כ"ץ','גדעון סער','אופיר כץ','טליק גואילי','יואב קיש','יעקב ברדוגו','מיקי זוהר','אלמוג כהן','עמיחי שיקלי','אלישע מדן','דוד פטר','משה סעדה','חיים כץ','דודי אמסלם','אתי עטייה','בועז ביסמוט','דוד ביטן','שלמה קרעי','ניר ברקת','גילה גמליאל','אלי גולדשמידט','ארז תדמור','שלמה יוסף לרנר','יצחק בונצל','משה בנימין פרץ']},
+ {id:'yas',name:'ישר!',letters:'דרך',leader:'גדי איזנקוט',seats:22,color:'#0b8fcf',list:['גדי איזנקוט','יורם כהן','אורית פרקש-הכהן','עדי אלטשולר','מתן כהנא','חילי טרופר','שאול מרידור','תאיר איפרגן','אושרת גני גונן','שירה שפירא','ענבר הרוש גיטי','אלעזר שטרן','כמיל אבו רוקון','דבורה שריפיאן בכר','אלקס ריף','ענבר יחזקאלי','רועי פולקמן','ישראל זרי','טל אוחנה','אליסף פרץ',"יפה טבג'ה","ניר חג'בי",'רון ברקאי','שי פישר','ליאן פולק-דוד','רועי כהן','זיו רוזן',"ג'וסלין באש"]},
+ {id:'bya',name:'ביחד',letters:'רק',leader:'נפתלי בנט',seats:12,color:'#5a4fcf',list:['נפתלי בנט','יאיר לפיד','קרן טרנר','מירב בן ארי','לירן אבישר בן-חורין','נעם תיבון','מיכל הירש נגרי','איתן גינזבורג','מירב כהן','יונתן שלו','ברוריה נעים ארמן','רם בן ברק','אמיר סטרוגו','נאור שירי','ניסן זאבי','ולדימיר בליאק','אורלי אלידן-הראל','יוראי להב-הרצנו','שחר ורון','יסמין פרידמן','אסתי איילון קובו','נטע אטיאס מויאל',"ג'רמי סלטן",'משה טור-פז']},
+ {id:'dem',name:'הדמוקרטים',letters:'אמת',leader:'יאיר גולן',seats:9,color:'#d93d6a',list:['יאיר גולן','נעמה לזימי','גלעד קריב','אפרת רייטן','יאיא פינק','גבי לסקי','עמרי רונן','מיכל רוזין','משה רדמן','סומיה בשיר','נמרוד שפר','מורן זר קצנשטיין','אבי דבוש','אמילי מואטי','תומר אביטל','נאוה רוזוליו','רם שפע','עלי סלאלחה','רתם סיון','ערן עציון']},
+ {id:'shs',name:'ש"ס',letters:'שס',leader:'אריה דרעי',seats:8,color:'#1f2a44',list:['אריה דרעי','ינון אזולאי','מיכאל מלכיאלי','יואב בן-צור','חיים ביטון','דרור עמוס','משה אבוטבול','אוריאל בוסו','יוסי טייב','יונתן מישרקי','יוסי אילנתנוב','ארז מלול','סימיון מושיאשוילי']},
+ {id:'utj',name:'יהדות התורה',letters:'ג',leader:'יעקב אשר',seats:8,color:'#5b6474',list:['יעקב אשר','יצחק גולדקנופף','יצחק פינדרוס','מאיר פרוש','משה רוזנטל','אליקים שטארק','יהודה וייספיש','יעקב טסלר','דוד זלץ','דוד אוחנה','משה רוט','אליהו ברוכי']},
+ {id:'otz',name:'עוצמה יהודית',letters:'ב',leader:'איתמר בן גביר',seats:8,color:'#d9730d',list:['איתמר בן גביר','טלי גוטליב','יצחק וסרלאוף','עמיחי אליהו','לימור סון הר-מלך','יצחק קרויזר','חנמאל דורפמן','צחי יצחק אליהו','יוסי גולדנברגר','איתיאל ניימן','דוד מנחם בבלי','ישי פליישר']},
+ {id:'yb',name:'ישראל ביתנו',letters:'ל',leader:'אביגדור ליברמן',seats:7,color:'#13958f',list:['אביגדור ליברמן','רפי בן שטרית','טליה לנקרי','עודד פורר','יוליה מלינובסקי','שרון שרעבי','חמד עמאר','יבגני סובה','אלוירה קוליחמן','דן אילוז','לילי בן עמי','יעל בנבנישתי']},
+ {id:'rzp',name:'הציונות הדתית–זהות',letters:'ט',leader:"בצלאל סמוטריץ'",seats:7,color:'#a8870a',list:["בצלאל סמוטריץ'",'משה פייגלין','אורית סטרוק','שמחה רוטמן','צביקה מור','איתמר איתם','צבי סוכות','יצחק זאגא','רעות בן חיים','עומר פציניאש ולדמן','ארקדי מוטר','אוהד טל']},
+ {id:'jnt',name:'הרשימה המשותפת',letters:'ודם',leader:"יוסף ג'בארין",seats:9,color:'#c23a2e',list:["יוסף ג'בארין",'אחמד טיבי',"פאתן ג'טאס",'בכר עואודה','עופר כסיף','יוסף עטאונה','מהא כרכבי-סבאח','אחמד דראושה','נהאיה ושאחי','חסן נסאסרה','הייתם זחאלקה','איאס נאטור']},
+ {id:'ram',name:'רע"מ',letters:'עם',leader:'מנסור עבאס',seats:6,color:'#2b8a55',list:['מנסור עבאס','יואב סגלוביץ','וליד טאהא','ואליד אלהואשלה',"אימאן ח'טיב-יאסין","יאסר חוג'יראת",'אברהים אל טורי','עבד אל-כרים מסרי']},
+ {id:'res',name:'המילואימניקים והכלכלית',letters:'די',leader:'יועז הנדל',seats:0,color:'#5f7232',list:['יועז הנדל','ירון זליכה','עינת וילף','חביב ווליבוביץ','יואב שלמה אדומי','אופיר שי לנגמן']},
+ {id:'amc',name:'עמך ישראל',letters:'ך',leader:'עופר וינטר',seats:0,color:'#8a44a8',list:['עופר וינטר','יוסף חדאד','נטעלי שם טוב','ערן בן ארי','פלר חסן-נחום','ללי דרעי','רונן בודנרו','אביב עזרא']}
+];
+const OFFICES=[['o0','ראש הממשלה'],['o8','משרד הביטחון'],['o1','המשרד לביטחון לאומי'],['o6','משרד האוצר'],['o12','משרד החוץ'],['o22','משרד הפנים'],['o18','משרד המשפטים'],['o10','משרד הבריאות'],['o13','משרד החינוך'],['o24','משרד התחבורה והבטיחות בדרכים'],['o27','משרד התקשורת'],['o28','משרד התרבות והספורט'],['o14','משרד החקלאות וביטחון המזון'],['o15','משרד הכלכלה והתעשייה'],['o23','משרד הרווחה והביטחון החברתי'],['o2','המשרד להגנת הסביבה'],['o3','המשרד לשוויון חברתי וקידום מעמד האישה'],['o4','המשרד לשירותי דת'],['o5','המשרד לשיתוף פעולה אזורי'],['o7','משרד האנרגיה והתשתיות'],['o9','משרד הבינוי והשיכון'],['o11','משרד ההתיישבות והמשימות הלאומיות'],['o16','משרד החדשנות, המדע והטכנולוגיה'],['o17','משרד המודיעין'],['o19','משרד הנגב, הגליל והחוסן הלאומי'],['o20','משרד העבודה'],['o21','משרד העלייה והקליטה'],['o25','משרד התיירות'],['o26','משרד התפוצות והמאבק באנטישמיות'],['o29','משרד המורשת'],['o30','משרד ירושלים ומסורת ישראל'],['o31','שר במשרד ראש הממשלה']];
+const PEOPLE=PARTIES.flatMap(p=>p.list.map((name,i)=>({id:p.id+'_'+(i+1),name,party:p.id,rank:i+1})));
+const partyById=Object.fromEntries(PARTIES.map(p=>[p.id,p]));
+const personById=Object.fromEntries(PEOPLE.map(p=>[p.id,p]));
+const officeName=Object.fromEntries(OFFICES);
+
+// ---------- State ----------
+const KEY='coalition-builder-v1';
+const fresh=()=>({seats:Object.fromEntries(PARTIES.map(p=>[p.id,p.seats])),coalition:[],offices:OFFICES.map(([id])=>({id,status:'active',mergedInto:null,minister:null}))});
+let state=fresh();
+try{const s=JSON.parse(localStorage.getItem(KEY));if(s&&s.offices){state={...fresh(),...s};state.offices=OFFICES.map(([id])=>s.offices.find(o=>o.id===id)||{id,status:'active',mergedInto:null,minister:null});state.coalition=(s.coalition||[]).filter(id=>partyById[id]);}}catch(e){}
+let tab='parties';
+try{tab=sessionStorage.getItem(KEY+'-tab')||'parties'}catch(e){}
+let wasComplete=null;
+
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const initials=n=>n.replace(/["']/g,'').split(/[\s-]+/).filter(Boolean).map(w=>w[0]).slice(0,2).join('');
+const coalSeats=()=>state.coalition.reduce((a,id)=>a+(state.seats[id]||0),0);
+const totalSeats=()=>PARTIES.reduce((a,p)=>a+(state.seats[p.id]||0),0);
+const active=()=>state.offices.filter(o=>o.status==='active');
+const isComplete=()=>{const a=active();return a.length>0&&a.every(o=>o.minister)};
+const inCoal=id=>state.coalition.includes(id);
+
+function save(){try{localStorage.setItem(KEY,JSON.stringify(state))}catch(e){}render();const c=isComplete();if(c&&wasComplete===false)completionDialog();wasComplete=c}
+
+// ---------- Render ----------
+function renderMeter(){
+  const bar=document.getElementById('meterBar');
+  const parts=PARTIES.filter(p=>inCoal(p.id)&&state.seats[p.id]>0);
+  bar.innerHTML=parts.map(p=>`<span style="width:${state.seats[p.id]/120*100}%;background:${p.color}" title="${esc(p.name)}: ${state.seats[p.id]}"></span>`).join('')+'<i class="mark"></i>';
+  const n=coalSeats();document.getElementById('coalSeats').textContent=n;
+  const m=document.getElementById('majority');
+  if(!state.coalition.length){m.textContent='בחרו מפלגות כדי להתחיל';m.className='status'}
+  else if(n>=61){m.textContent=`יש רוב (+${n-60})`;m.className='status ok'}
+  else{m.textContent=`חסרים ${61-n} לרוב`;m.className='status bad'}
+}
+
+function viewParties(){
+  const tot=totalSeats();
+  return `<div class="intro"><div><h2>אילו מפלגות בקואליציה?</h2><p>לחצו על פתק כדי לצרף מפלגה או להוציא אותה. מספרי המנדטים הם ממוצע חמשת הסקרים האחרונים, ואפשר לשנות אותם.</p></div>
+  <div class="row"><button class="btn" data-act="resetSeats">איפוס המנדטים לממוצע הסקרים</button><button class="btn" data-act="clearCoal" ${state.coalition.length?'':'disabled'}>ניקוי הבחירה</button></div></div>
+  ${tot!==120?`<p class="warn-line">סך המנדטים של כל המפלגות הוא ${tot}, לא 120. התאימו את המספרים כדי שהתמונה תהיה מציאותית.</p>`:''}
+  <div class="slips">${PARTIES.map(p=>{
+    const s=state.seats[p.id]||0,on=inCoal(p.id);
+    return `<article class="slip ${on?'in':''}" style="--pc:${p.color}">
+      <div class="slip-head"><div class="letters" aria-label="אותיות הפתק">${esc(p.letters)}</div><div><h3><span class="swatch"></span>${esc(p.name)}</h3><div class="lead">בראשות ${esc(p.leader)}</div></div></div>
+      <div class="slip-body">
+        <div class="seats"><label for="seats-${p.id}">מנדטים</label><div class="stepper"><button data-act="seat" data-p="${p.id}" data-d="-1" aria-label="פחות מנדט">−</button><input id="seats-${p.id}" type="number" min="0" max="120" inputmode="numeric" value="${s}" data-seatinput="${p.id}"><button data-act="seat" data-p="${p.id}" data-d="1" aria-label="עוד מנדט">+</button></div></div>
+        ${s===0?'<div class="below">מתחת לאחוז החסימה בממוצע הסקרים</div>':''}
+        <details class="list"><summary>רשימת המועמדים (${p.list.length}) ▾</summary><ol>${p.list.map((n,i)=>`<li class="${i<s?'':'cut'}"><span class="r">${i+1}</span><span>${esc(n)}</span></li>`).join('')}</ol></details>
+      </div>
+      <button class="join" data-act="toggle" data-p="${p.id}" aria-pressed="${on}">${on?'✓ בקואליציה · להוצאה':'+ צירוף לקואליציה'}</button>
+    </article>`}).join('')}</div>
+  <p class="foot">מוצגות 13 הרשימות שעברו את אחוז החסימה לפחות בסקר אחד מחמשת האחרונים. רשימות שמתחת לחסימה מסומנות ב-0 מנדטים וניתנות לצירוף. מועמדים שמחוץ למספר המנדטים מסומנים באפור, ועדיין אפשר למנות אותם לשרים.</p>`;
+}
+
+function viewStructure(){
+  return `<div class="intro"><div><h2>מבנה המשרדים</h2><p>סגרו משרדים או מזגו אותם לתוך משרד אחר. משרד שנסגר או מוזג יוצא מרשימת המינויים.</p></div></div>
+  <div class="grid">${state.offices.map(o=>{const n=officeName[o.id];
+    const label=o.status==='active'?'פעיל':o.status==='closed'?'נסגר':'מוזג לתוך '+esc(officeName[o.mergedInto]||'');
+    return `<div class="office ${o.status}"><h4>${esc(n)}</h4><span class="pill ${o.status==='active'?'on':''}">${label}</span>
+    ${o.status!=='active'?`<button class="btn" data-act="activate" data-o="${o.id}">פתיחה מחדש</button>`:
+      (o.id==='o0'?'<span class="note">משרד ראש הממשלה נשאר פתוח.</span>':
+      `<button class="btn danger" data-act="close" data-o="${o.id}">סגירת המשרד</button>
+       <select aria-label="מיזוג ${esc(n)}" data-merge="${o.id}"><option value="">מיזוג לתוך משרד…</option>${active().filter(x=>x.id!==o.id).map(x=>`<option value="${x.id}">${esc(officeName[x.id])}</option>`).join('')}</select>`)}
+    </div>`}).join('')}</div>`;
+}
+
+function ministerCard(pid){
+  const p=personById[pid];if(!p)return '<div class="vacant">טרם מונה שר או שרה</div>';
+  const party=partyById[p.party];
+  return `<div class="minister" style="--pc:${party.color}"><span class="avatar">${esc(initials(p.name))}</span><div><b>${esc(p.name)}</b><small>${esc(party.name)} · מקום ${p.rank}</small></div></div>`;
+}
+
+function viewOffices(){
+  if(!state.coalition.length)return `<div class="empty"><p>עוד לא נבחרו מפלגות לקואליציה, ולכן אין ממי למנות שרים.</p><button class="btn primary" data-goto="parties">לבחירת מפלגות</button></div>`;
+  const a=active(),filled=a.filter(o=>o.minister).length;
+  return `<div class="intro"><div><h2>מינוי שרים</h2><p>חפשו לפי שם או לפי שם מפלגה. מוצגים רק מועמדים ממפלגות הקואליציה: ${state.coalition.map(id=>esc(partyById[id].name)).join(' · ')}.</p></div><span class="note">${filled} מתוך ${a.length} משרדים אוישו</span></div>
+  <div class="grid">${a.map(o=>`<div class="office"><h4>${esc(officeName[o.id])}</h4>${ministerCard(o.minister)}
+    <input type="search" id="q-${o.id}" data-search="${o.id}" placeholder="${o.minister?'החלפת המינוי…':'הקלידו שם או מפלגה…'}" autocomplete="off" aria-label="חיפוש מועמד ל${esc(officeName[o.id])}">
+    <div class="results" id="r-${o.id}"></div>
+    ${o.minister?`<button class="linkbtn red" data-act="unassign" data-o="${o.id}">ביטול המינוי</button>`:''}
+  </div>`).join('')}</div>`;
+}
+
+function viewSummary(){
+  const a=active(),appointed=new Set(a.filter(o=>o.minister).map(o=>o.minister));
+  const cs=coalSeats(),filled=a.filter(o=>o.minister);
+  const rows=state.coalition.map(id=>{const p=partyById[id];const seats=state.seats[id]||0;
+    const posts=filled.filter(o=>personById[o.minister].party===id).length;
+    const people=[...appointed].filter(x=>personById[x].party===id).length;
+    const ss=cs?seats/cs*100:0,ps=filled.length?posts/filled.length*100:0;return {p,seats,posts,people,ss,ps}});
+  const closed=state.offices.filter(o=>o.status!=='active');
+  return `<div class="intro"><div><h2>הממשלה שלי</h2><p>${state.coalition.length?`קואליציה של ${cs} מנדטים, ${cs>=61?'עם רוב בכנסת':'ללא רוב בכנסת'}. ${a.length} משרדים פעילים, ${filled.length} מאוישים${closed.length?`, ${closed.length} נסגרו או מוזגו`:''}.`:'עוד לא נבחרו מפלגות.'}</p></div>
+  <div class="row"><button class="btn primary" data-act="copy">העתקת סיכום הממשלה</button><button class="btn danger" data-act="reset" id="resetBtn">איפוס הכול</button></div></div>
+  ${rows.length?`<section class="panel"><h3>חלוקת התיקים מול כוח המפלגות</h3><div class="tablewrap"><table><thead><tr><th>מפלגה</th><th>מנדטים</th><th>חלק בקואליציה</th><th>תיקים</th><th>חלק מהתיקים</th><th>פער</th></tr></thead><tbody>
+  ${rows.map(r=>{const g=Math.round(r.ps-r.ss);return `<tr style="--pc:${r.p.color}"><td><span class="swatch"></span>${esc(r.p.name)}</td><td class="n">${r.seats}</td><td><div class="share"><div class="bar"><span style="width:${r.ss}%"></span></div><span class="n">${Math.round(r.ss)}%</span></div></td><td class="n">${r.posts}${r.people!==r.posts?` <span class="note">(${r.people} שרים)</span>`:''}</td><td><div class="share"><div class="bar"><span style="width:${r.ps}%"></span></div><span class="n">${Math.round(r.ps)}%</span></div></td><td class="n ${filled.length?(g>0?'gap-pos':g<0?'gap-neg':''):''}">${filled.length?(g>0?'+':'')+g+'%':'–'}</td></tr>`}).join('')}
+  </tbody></table></div><p class="note">פער חיובי: המפלגה קיבלה יותר תיקים מחלקה במנדטים של הקואליציה.</p></section>`:''}
+  <div class="grid">${state.offices.map(o=>`<div class="office ${o.status}"><h4>${esc(officeName[o.id])}</h4>${o.status==='active'?ministerCard(o.minister):`<span class="pill">${o.status==='closed'?'נסגר':'מוזג לתוך '+esc(officeName[o.mergedInto]||'')}</span>`}</div>`).join('')}</div>
+  <p class="foot">סימולציה בלבד. המידע נשמר בדפדפן שלך. מספרי המנדטים מבוססים על ממוצע סקרים מ-21–22 באוקטובר 2026 (<a href="https://en.wikipedia.org/wiki/Opinion_polling_for_the_2026_Israeli_legislative_election" target="_blank" rel="noopener">טבלת הסקרים</a>), והרשימות על פי הרשימות שהוגשו לוועדת הבחירות (<a href="https://he.wikipedia.org/wiki/%D7%94%D7%91%D7%97%D7%99%D7%A8%D7%95%D7%AA_%D7%9C%D7%9B%D7%A0%D7%A1%D7%AA_%D7%94%D7%A2%D7%A9%D7%A8%D7%99%D7%9D_%D7%95%D7%A9%D7%A9" target="_blank" rel="noopener">ויקיפדיה</a>). אין זה סקר ואין זו תחזית.</p>`;
+}
+
+function render(){
+  document.querySelectorAll('.step').forEach(b=>b.setAttribute('aria-selected',b.dataset.tab===tab));
+  renderMeter();
+  const v={parties:viewParties,structure:viewStructure,offices:viewOffices,summary:viewSummary}[tab]||viewParties;
+  const open=[...document.querySelectorAll('details.list[open]')].map(d=>d.closest('.slip')?.querySelector('[data-act=toggle]')?.dataset.p);
+  document.getElementById('content').innerHTML=v();
+  open.forEach(id=>{const b=document.querySelector(`[data-act=toggle][data-p="${id}"]`);b?.closest('.slip')?.querySelector('details')?.setAttribute('open','')});
+}
+
+// ---------- Actions ----------
+let undoSnap=null,toastTimer=null;
+function toast(msg,undo){
+  document.querySelector('.toast')?.remove();clearTimeout(toastTimer);
+  const t=document.createElement('div');t.className='toast';t.setAttribute('role','status');
+  t.innerHTML=`<span>${esc(msg)}</span>${undo?'<button type="button">ביטול</button>':''}`;
+  if(undo)t.querySelector('button').onclick=()=>{state=undo;t.remove();save()};
+  document.body.appendChild(t);toastTimer=setTimeout(()=>t.remove(),6000);
+}
+function togglePart(id){
+  if(inCoal(id)){
+    const snap=JSON.parse(JSON.stringify(state));
+    const vac=state.offices.filter(o=>o.minister&&personById[o.minister].party===id);
+    vac.forEach(o=>o.minister=null);
+    state.coalition=state.coalition.filter(x=>x!==id);save();
+    toast(`${partyById[id].name} יצאה מהקואליציה${vac.length?` · ${vac.length} מינויים בוטלו`:''}`,snap);
+  }else{state.coalition.push(id);state.coalition.sort((a,b)=>PARTIES.findIndex(p=>p.id===a)-PARTIES.findIndex(p=>p.id===b));save()}
+}
+function setSeats(id,v){v=Math.max(0,Math.min(120,Math.round(+v||0)));state.seats[id]=v;save()}
+function assign(oid,pid){
+  const o=state.offices.find(x=>x.id===oid);if(!o)return;
+  const other=pid&&state.offices.find(x=>x.id!==oid&&x.status==='active'&&x.minister===pid);
+  if(other){dialog('דאבל בוקינג',`${personById[pid].name} כבר ממונה ל${officeName[other.id]}. למנות גם ל${officeName[oid]}?`,[['ביטול',null],['כן, שני תיקים',()=>{o.minister=pid;save()}]]);return}
+  o.minister=pid||null;save();
+}
+function closeOffice(id){const o=state.offices.find(x=>x.id===id);o.status='closed';o.minister=null;o.mergedInto=null;state.offices.filter(x=>x.mergedInto===id).forEach(x=>{x.status='closed';x.mergedInto=null});save()}
+function mergeOffice(id,target){if(!target)return;const o=state.offices.find(x=>x.id===id);o.status='merged';o.mergedInto=target;o.minister=null;state.offices.filter(x=>x.mergedInto===id).forEach(x=>x.mergedInto=target);save()}
+function activate(id){const o=state.offices.find(x=>x.id===id);o.status='active';o.mergedInto=null;save()}
+function searchCandidates(oid,q){
+  const el=document.getElementById('r-'+oid);if(!el)return;q=q.trim();
+  if(!q){el.innerHTML='';return}
+  const m=PEOPLE.filter(p=>inCoal(p.party)&&(p.name.includes(q)||partyById[p.party].name.includes(q))).sort((a,b)=>a.rank-b.rank).slice(0,14);
+  el.innerHTML=m.length?m.map(p=>{const pt=partyById[p.party];return `<button class="cand" data-act="assign" data-o="${oid}" data-person="${p.id}" style="--pc:${pt.color}"><span class="who"><span class="avatar">${esc(initials(p.name))}</span><span>${esc(p.name)}</span></span><small>${esc(pt.name)} · ${p.rank}</small></button>`}).join(''):'<div class="note">אין מועמד כזה במפלגות הקואליציה</div>';
+}
+function summaryText(){
+  const lines=['הממשלה שלי · מרכיבים קואליציה',`קואליציה: ${state.coalition.map(id=>`${partyById[id].name} (${state.seats[id]})`).join(', ')||'—'}`,`סה"כ ${coalSeats()} מנדטים${coalSeats()>=61?' · יש רוב':' · אין רוב'}`,''];
+  active().forEach(o=>{const p=personById[o.minister];lines.push(`${officeName[o.id]}: ${p?`${p.name} (${partyById[p.party].name})`:'לא מונה'}`)});
+  const gone=state.offices.filter(o=>o.status!=='active');
+  if(gone.length){lines.push('');gone.forEach(o=>lines.push(`${officeName[o.id]}: ${o.status==='closed'?'נסגר':'מוזג לתוך '+officeName[o.mergedInto]}`))}
+  return lines.join('\n');
+}
+async function copySummary(){
+  const text=summaryText();
+  try{await navigator.clipboard.writeText(text);toast('הסיכום הועתק')}
+  catch(e){dialog('העתקת הסיכום','לא ניתן להעתיק אוטומטית. סמנו את הטקסט והעתיקו:',[['סגירה',null]],text)}
+}
+function dialog(title,text,buttons,pre){
+  const ov=document.createElement('div');ov.className='overlay';
+  ov.innerHTML=`<div class="dialog" role="dialog" aria-modal="true" aria-labelledby="dlgT"><h2 id="dlgT">${esc(title)}</h2><p>${esc(text)}</p>${pre?`<textarea readonly rows="8" style="width:100%;direction:rtl;background:var(--paper);border:1px solid var(--line);border-radius:7px;padding:8px">${esc(pre)}</textarea>`:''}<div class="row"></div></div>`;
+  const row=ov.querySelector('.row');
+  buttons.forEach(([label,fn],i)=>{const b=document.createElement('button');b.className='btn'+(i===buttons.length-1?' primary':'');b.textContent=label;b.onclick=()=>{ov.remove();fn&&fn()};row.appendChild(b)});
+  ov.addEventListener('click',e=>{if(e.target===ov)ov.remove()});
+  ov.addEventListener('keydown',e=>{if(e.key==='Escape')ov.remove()});
+  document.body.appendChild(ov);row.lastChild.focus();
+  if(pre)ov.querySelector('textarea').select();
+}
+function completionDialog(){
+  const n=coalSeats();
+  dialog('כל המשרדים אוישו',n>=61?`הרכבתם ממשלה עם ${n} מנדטים, ${n-60} מעל הרוב הדרוש.`:`כל התיקים חולקו, אבל לקואליציה יש רק ${n} מנדטים. חסרים ${61-n} כדי לזכות באמון הכנסת.`,[['המשך עריכה',null],['לסיכום',()=>{tab='summary';persistTab();render()}]]);
+}
+function persistTab(){try{sessionStorage.setItem(KEY+'-tab',tab)}catch(e){}}
+
+let resetArmed=null;
+document.addEventListener('click',e=>{
+  const g=e.target.closest('[data-goto]');if(g){tab=g.dataset.goto;persistTab();render();return}
+  const st=e.target.closest('.step');if(st){tab=st.dataset.tab;persistTab();render();window.scrollTo({top:0});return}
+  const b=e.target.closest('[data-act]');if(!b)return;
+  const {act,p,o}=b.dataset;
+  if(act==='toggle')togglePart(p);
+  else if(act==='seat')setSeats(p,(state.seats[p]||0)+ +b.dataset.d);
+  else if(act==='resetSeats'){PARTIES.forEach(x=>state.seats[x.id]=x.seats);save()}
+  else if(act==='clearCoal'){const snap=JSON.parse(JSON.stringify(state));state.coalition=[];state.offices.forEach(x=>x.minister=null);save();toast('הקואליציה נוקתה וכל המינויים בוטלו',snap)}
+  else if(act==='assign')assign(o,b.dataset.person);
+  else if(act==='unassign')assign(o,'');
+  else if(act==='close')closeOffice(o);
+  else if(act==='activate')activate(o);
+  else if(act==='copy')copySummary();
+  else if(act==='reset'){
+    if(resetArmed){clearTimeout(resetArmed);resetArmed=null;const snap=JSON.parse(JSON.stringify(state));state=fresh();save();toast('הכול אופס',snap)}
+    else{b.textContent='לחצו שוב לאישור';b.classList.add('armed');resetArmed=setTimeout(()=>{resetArmed=null;b.textContent='איפוס הכול';b.classList.remove('armed')},3000)}
+  }
+});
+document.addEventListener('change',e=>{
+  const t=e.target;
+  if(t.dataset.merge)mergeOffice(t.dataset.merge,t.value);
+  else if(t.dataset.seatinput)setSeats(t.dataset.seatinput,t.value);
+});
+document.addEventListener('input',e=>{if(e.target.dataset.search)searchCandidates(e.target.dataset.search,e.target.value)});
+
+render();wasComplete=isComplete();
+</script>
