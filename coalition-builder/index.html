@@ -182,7 +182,7 @@ td.n{font-variant-numeric:tabular-nums}
 <script>
 // ---------- Data ----------
 // Seats: average of the five latest polls listed on Wikipedia (Ch.14 ×2, Ch.13, Ch.12, Zman Yisrael; 21–22 Oct 2026),
-// keeping only lists that average above the 3.25% threshold, scaled to 120 by largest remainder.
+// with lists averaging under the threshold set to 0 and the rest scaled to 120 by largest remainder.
 // Lists: as submitted to the Central Elections Committee (Hebrew Wikipedia, "הבחירות לכנסת העשרים ושש").
 const PARTIES=[
  {id:'lik',name:'הליכוד',letters:'מחל',leader:'בנימין נתניהו',seats:24,color:'#2456b5',list:['בנימין נתניהו','אלי כהן','אמיר אוחנה','יריב לוין','מירי רגב','ישראל כ"ץ','גדעון סער','אופיר כץ','טליק גואילי','יואב קיש','יעקב ברדוגו','מיקי זוהר','אלמוג כהן','עמיחי שיקלי','אלישע מדן','דוד פטר','משה סעדה','חיים כץ','דודי אמסלם','אתי עטייה','בועז ביסמוט','דוד ביטן','שלמה קרעי','ניר ברקת','גילה גמליאל','אלי גולדשמידט','ארז תדמור','שלמה יוסף לרנר','יצחק בונצל','משה בנימין פרץ']},
@@ -196,6 +196,8 @@ const PARTIES=[
  {id:'rzp',name:'הציונות הדתית–זהות',letters:'ט',leader:"בצלאל סמוטריץ'",seats:7,color:'#a8870a',list:["בצלאל סמוטריץ'",'משה פייגלין','אורית סטרוק','שמחה רוטמן','צביקה מור','איתמר איתם','צבי סוכות','יצחק זאגא','רעות בן חיים','עומר פציניאש ולדמן','ארקדי מוטר','אוהד טל']},
  {id:'jnt',name:'הרשימה המשותפת',letters:'ודם',leader:"יוסף ג'בארין",seats:9,color:'#c23a2e',list:["יוסף ג'בארין",'אחמד טיבי',"פאתן ג'טאס",'בכר עואודה','עופר כסיף','יוסף עטאונה','מהא כרכבי-סבאח','אחמד דראושה','נהאיה ושאחי','חסן נסאסרה','הייתם זחאלקה','איאס נאטור']},
  {id:'ram',name:'רע"מ',letters:'עם',leader:'מנסור עבאס',seats:6,color:'#2b8a55',list:['מנסור עבאס','יואב סגלוביץ','וליד טאהא','ואליד אלהואשלה',"אימאן ח'טיב-יאסין","יאסר חוג'יראת",'אברהים אל טורי','עבד אל-כרים מסרי']},
+ {id:'res',name:'המילואימניקים והכלכלית',letters:'די',leader:'יועז הנדל',seats:0,color:'#5f7232',list:['יועז הנדל','ירון זליכה','עינת וילף','חביב ווליבוביץ','יואב שלמה אדומי','אופיר שי לנגמן']},
+ {id:'amc',name:'עמך ישראל',letters:'ך',leader:'עופר וינטר',seats:0,color:'#8a44a8',list:['עופר וינטר','יוסף חדאד','נטעלי שם טוב','ערן בן ארי','פלר חסן-נחום','ללי דרעי','רונן בודנרו','אביב עזרא']}
 ];
 const OFFICES=[['o0','ראש הממשלה'],['o8','משרד הביטחון'],['o1','המשרד לביטחון לאומי'],['o6','משרד האוצר'],['o12','משרד החוץ'],['o22','משרד הפנים'],['o18','משרד המשפטים'],['o10','משרד הבריאות'],['o13','משרד החינוך'],['o24','משרד התחבורה והבטיחות בדרכים'],['o27','משרד התקשורת'],['o28','משרד התרבות והספורט'],['o14','משרד החקלאות וביטחון המזון'],['o15','משרד הכלכלה והתעשייה'],['o23','משרד הרווחה והביטחון החברתי'],['o2','המשרד להגנת הסביבה'],['o3','המשרד לשוויון חברתי וקידום מעמד האישה'],['o4','המשרד לשירותי דת'],['o5','המשרד לשיתוף פעולה אזורי'],['o7','משרד האנרגיה והתשתיות'],['o9','משרד הבינוי והשיכון'],['o11','משרד ההתיישבות והמשימות הלאומיות'],['o16','משרד החדשנות, המדע והטכנולוגיה'],['o17','משרד המודיעין'],['o19','משרד הנגב, הגליל והחוסן הלאומי'],['o20','משרד העבודה'],['o21','משרד העלייה והקליטה'],['o25','משרד התיירות'],['o26','משרד התפוצות והמאבק באנטישמיות'],['o29','משרד המורשת'],['o30','משרד ירושלים ומסורת ישראל'],['o31','שר במשרד ראש הממשלה']];
 const PEOPLE=PARTIES.flatMap(p=>p.list.map((name,i)=>({id:p.id+'_'+(i+1),name,party:p.id,rank:i+1})));
@@ -207,7 +209,7 @@ const officeName=Object.fromEntries(OFFICES);
 const KEY='coalition-builder-v1';
 const fresh=()=>({seats:Object.fromEntries(PARTIES.map(p=>[p.id,p.seats])),coalition:[],offices:OFFICES.map(([id])=>({id,status:'active',mergedInto:null,minister:null}))});
 let state=fresh();
-try{const s=JSON.parse(localStorage.getItem(KEY));if(s&&s.offices){state={...fresh(),...s};state.offices=OFFICES.map(([id])=>s.offices.find(o=>o.id===id)||{id,status:'active',mergedInto:null,minister:null});state.coalition=(s.coalition||[]).filter(id=>partyById[id]);state.offices.forEach(o=>{if(o.minister&&!personById[o.minister])o.minister=null});}}catch(e){}
+try{const s=JSON.parse(localStorage.getItem(KEY));if(s&&s.offices){state={...fresh(),...s};state.offices=OFFICES.map(([id])=>s.offices.find(o=>o.id===id)||{id,status:'active',mergedInto:null,minister:null});state.coalition=(s.coalition||[]).filter(id=>partyById[id]);}}catch(e){}
 let tab='parties';
 try{tab=sessionStorage.getItem(KEY+'-tab')||'parties'}catch(e){}
 let wasComplete=null;
@@ -250,7 +252,7 @@ function viewParties(){
       </div>
       <button class="join" data-act="toggle" data-p="${p.id}" aria-pressed="${on}">${on?'✓ בקואליציה · להוצאה':'+ צירוף לקואליציה'}</button>
     </article>`}).join('')}</div>
-  <p class="foot">מוצגות 11 הרשימות שעוברות את אחוז החסימה בממוצע חמשת הסקרים האחרונים (21–22 באוקטובר 2026). מועמדים שמחוץ למספר המנדטים מסומנים באפור, ועדיין אפשר למנות אותם לשרים.</p>`;
+  <p class="foot">מוצגות 13 הרשימות שעברו את אחוז החסימה לפחות בסקר אחד מחמשת האחרונים. רשימות שמתחת לחסימה מסומנות ב-0 מנדטים וניתנות לצירוף. מועמדים שמחוץ למספר המנדטים מסומנים באפור, ועדיין אפשר למנות אותם לשרים.</p>`;
 }
 
 function viewStructure(){
