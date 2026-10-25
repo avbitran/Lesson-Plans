@@ -1060,6 +1060,9 @@ const DRIVE_PERMISSION_HELP =
 // Run this once from the Apps Script editor (choose "authorize", then Run)
 // to grant every permission the app needs.
 function authorize() {
+  // With Google's per-permission consent, a permission that was unticked is
+  // only offered again when the script asks for it explicitly.
+  if (typeof ScriptApp.requireAllScopes === 'function') ScriptApp.requireAllScopes(ScriptApp.AuthMode.FULL);
   const ss = spreadsheet_();
   const folder = recordingsFolder_();
   console.log('All set. Data: ' + ss.getUrl() + '  Voice answers: ' + folder.getUrl());
