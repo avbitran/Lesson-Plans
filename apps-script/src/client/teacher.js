@@ -839,10 +839,14 @@ async function peoplePage() {
         {},
         'All data is kept in ',
         h('a', { href: settings.spreadsheetUrl, target: '_blank', rel: 'noopener' }, 'this Google Sheet'),
-        ' and voice answers in ',
-        h('a', { href: settings.recordingsUrl, target: '_blank', rel: 'noopener' }, 'this Drive folder'),
-        '. Don’t rename or reorder the sheet’s columns.',
+        settings.recordingsUrl ? ' and voice answers in ' : '. ',
+        settings.recordingsUrl ? h('a', { href: settings.recordingsUrl, target: '_blank', rel: 'noopener' }, 'this Drive folder') : null,
+        settings.recordingsUrl ? '. ' : null,
+        'Don’t rename or reorder the sheet’s columns.',
       ),
+      settings.recordingsUrl
+        ? null
+        : h('p', { class: 'error', text: 'Voice answers are not set up: the app has no permission to use Google Drive. In the Apps Script editor, choose "authorize" in the function list at the top, click Run, and tick every box.' }),
       h('label', {}, 'Voice recorder page (the pop-up students record in)', recorderUrl),
       h(
         'div',

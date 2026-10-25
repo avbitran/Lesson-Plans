@@ -39,9 +39,29 @@ function recordingsFolder_() {
       // Folder was deleted; make a new one below.
     }
   }
-  const folder = DriveApp.createFolder('Online Tests – voice answers');
+  let folder;
+  try {
+    folder = DriveApp.createFolder('Online Tests – voice answers');
+  } catch (e) {
+    if (/permission/i.test(String(e && e.message))) throw new HttpError(503, DRIVE_PERMISSION_HELP);
+    throw e;
+  }
   props.setProperty('RECORDINGS_FOLDER_ID', folder.getId());
   return folder;
+}
+
+// Google's consent screen lets people untick Drive; voice answers need it.
+const DRIVE_PERMISSION_HELP =
+  'Voice answers are not set up yet: the app needs permission to use Google Drive. ' +
+  'Teacher: open the Apps Script editor, choose "authorize" in the function list at the top, click Run, ' +
+  'and tick every box on the permission screen (including Google Drive).';
+
+// Run this once from the Apps Script editor (choose "authorize", then Run)
+// to grant every permission the app needs.
+function authorize() {
+  const ss = spreadsheet_();
+  const folder = recordingsFolder_();
+  console.log('All set. Data: ' + ss.getUrl() + '  Voice answers: ' + folder.getUrl());
 }
 
 let lockHeld_ = false;
@@ -96,7 +116,13 @@ function env_(db) {
         return {
           recorderUrl: p.getProperty('RECORDER_URL') || DEFAULT_RECORDER_URL,
           spreadsheetUrl: spreadsheet_().getUrl(),
-          recordingsUrl: recordingsFolder_().getUrl(),
+          recordingsUrl: (() => {
+            try {
+              return recordingsFolder_().getUrl();
+            } catch (e) {
+              return null; // shown on the Students page as "not set up"
+            }
+          })(),
         };
       },
       set(s) {

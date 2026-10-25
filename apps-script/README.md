@@ -32,7 +32,8 @@ Do all of this while signed in to your **school** Google account.
    - **Execute as:** *Me*
    - **Who has access:** *Anyone within [your school]*
 3. Click **Deploy**. Google asks you to authorize it: choose your account and **Allow**. (If you see "Google hasn't verified this app", click **Advanced → Go to … (unsafe)**. It's your own script.)
-4. Copy the **Web app URL**. **This is the link to the app**, for you and your students. Open it: you're the teacher, because you own it.
+4. **Make sure every permission box is ticked.** Google may list permissions with checkboxes. Leave them all ticked, including Google Drive, which voice answers need. If you missed one, open the editor, choose **authorize** in the function list next to **▷ Run**, click **Run**, and tick everything.
+5. Copy the **Web app URL**. **This is the link to the app**, for you and your students. Open it: you're the teacher, because you own it.
 
 ### 3. Turn on the voice recorder page (GitHub Pages)
 
