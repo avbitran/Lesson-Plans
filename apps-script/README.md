@@ -10,6 +10,7 @@ A free online test system that runs entirely in your school Google account.
 - **Create a test from a PDF with AI.** Give any AI chat (Claude, Gemini, ChatGPT) the PDF and the app's ready-made instructions, paste the reply back, and check the draft.
 - **Submit and grade.** Answers save automatically. Multiple choice and short answers are marked for you, and anything uncertain is flagged "Check". You mark the rest, add comments, and return the test.
 - **Exam mode.** Every time a student leaves the test (another tab, window or app) it's recorded with the time. After a number of warnings you choose, the test **pauses until you unlock it** or **submits itself**. Copy/paste is blocked.
+- **👁 Student view.** See any test exactly as students do: the start screen, the questions, read-aloud and voice buttons, extra time, and (if you want) exam mode with its warnings and pause. Pick a specific student to see their accommodations, or see a student's home page from the Students page. Nothing is saved.
 - **Live view** of who's working, their progress, time left and how often they left the test.
 
 Everything is stored in **a Google Sheet** and **a Drive folder** in your account.
@@ -51,7 +52,7 @@ That address is already the app's default. If you host the recorder somewhere el
 
 1. In the app, go to **Students** and paste one student per line: `school email, name, class`. Tick read-aloud, voice answers or extra time for students who need them.
 2. Go to **Tests → Import JSON** and pick [`samples/past-simple-vs-past-progressive.json`](samples/past-simple-vs-past-progressive.json) (download it first), or click **+ New test**.
-3. Set **Classes** (leave empty for all students) and set the status to **Open**, then **Save**. Use **Preview as student** to hear the read-aloud.
+3. Set **Classes** (leave empty for all students) and set the status to **Open**, then **Save**. Use **👁 Student view** to see and hear it the way students will.
 4. Give students the web app link (for example in Google Classroom). They see the test, press **Start**, and you watch from **Tests → (the test)**.
 
 ---
@@ -77,7 +78,7 @@ Some of this depends on how your school set up Google and the Chromebooks, so tr
 
 - **Voice answers:** students need to allow pop-ups and the microphone the first time. If the school blocks `github.io`, host `recorder.html` elsewhere and change the address in Settings.
 - **Full screen:** Google's frame may not allow full screen. If it doesn't, the test runs normally without it, and leaving the test is still detected and logged. The activity log says "Full screen is not available".
-- **Read-aloud** uses the Chromebook's built-in voices. Check how they sound in Preview.
+- **Read-aloud** uses the Chromebook's built-in voices. Check how they sound in 👁 Student view.
 - **Class size:** Google limits how many requests one script handles at once. It's built to stay well under that for a class (answers save every 15 seconds), but run a small trial first.
 
 ## What exam mode can and can't do

@@ -280,6 +280,12 @@ textarea { width: 100%; resize: vertical; }
 .ai-step h3 { display: flex; align-items: center; gap: .5rem; margin: .2rem 0 .5rem; font-size: 1.05rem; }
 .mono-small { font: .82rem/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
 .modal { max-height: calc(100vh - 32px); }
+
+.preview-bar { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem 1rem; padding: .55rem 16px; background: var(--warn-soft); color: var(--text); border-bottom: 2px solid var(--warn); font-size: .95rem; }
+.wrap > .preview-bar { border: 2px solid var(--warn); border-radius: var(--radius); margin-bottom: 1rem; }
+.preview-bar strong:first-child { color: var(--warn); }
+.pv-check { display: inline-flex; align-items: center; gap: .35rem; }
+.preview-bar select { padding: .25rem .4rem; }
   </style>
 </head>
 <body>
@@ -513,9 +519,14 @@ class Reader {
 // App.take() builds one session; everything it installs checks that
 // session's own `state`, so a finished session goes quiet.
 
-App.take = function take(testId, { preview = false } = {}) {
+App.take = function take(testId, { preview = false, view = {} } = {}) {
   const app = document.getElementById('app');
   const PREVIEW = preview;
+  // Student view for the teacher: `view` says which accommodations to show
+  // and whether to simulate exam mode. Nothing is ever saved or counted.
+  const PV = PREVIEW ? view : {};
+  const EXAM = !PREVIEW || !!PV.exam;
+  const BACK = PREVIEW ? PV.back || '#tests' : '#my';
   const CLIENT_ID = crypto.randomUUID();
   const intervals = [];
   const every = (fn, ms) => intervals.push(setInterval(fn, ms));
@@ -548,6 +559,9 @@ App.take = function take(testId, { preview = false } = {}) {
     clearInterval(lockPoll);
     reader?.stop();
     closeRecorder();
+    navigator.keyboard?.unlock?.();
+    if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+    document.querySelectorAll('.overlay, dialog').forEach((d) => d.remove());
   };
 
   // ---------------------------------------------------------------- network
@@ -591,7 +605,8 @@ App.take = function take(testId, { preview = false } = {}) {
 
   const lastLogged = {};
   function report(type, detail = '') {
-    if (PREVIEW || state.finished) return;
+    if (state.finished) return;
+    if (PREVIEW) return simulateEvent(type);
     // Blocked copy/paste/shortcuts are logged at most once every 10 seconds.
     if (!['left', 'fullscreen_exit', 'returned'].includes(type)) {
       if (Date.now() - (lastLogged[type] || 0) < 10e3) return;
@@ -606,10 +621,22 @@ App.take = function take(testId, { preview = false } = {}) {
       .catch(() => {});
   }
 
+  // In student view, exam mode warnings and the pause happen locally.
+  function simulateEvent(type) {
+    if (!EXAM || !['left', 'fullscreen_exit'].includes(type)) return;
+    state.violations++;
+    const { maxViolations, onLimit } = settings();
+    if (maxViolations && state.violations >= maxViolations) {
+      if (onLimit === 'lock') showLocked();
+      else if (onLimit === 'submit') finish(`In a real test it would now be submitted automatically: the student left ${maxViolations} times.`);
+    }
+    return Promise.resolve();
+  }
+
   // --------------------------------------------------------------- lockdown
 
   const settings = () => state.test.settings;
-  const wantsFullscreen = () => !PREVIEW && settings().requireFullscreen && !state.fsUnavailable;
+  const wantsFullscreen = () => EXAM && settings().requireFullscreen && !state.fsUnavailable;
 
   async function enterFullscreen() {
     if (!wantsFullscreen()) return true;
@@ -632,7 +659,7 @@ App.take = function take(testId, { preview = false } = {}) {
 
   // Window blur and tab hide usually fire together; state.away logs them once.
   function leftTest(detail) {
-    if (state.finished || state.away || PREVIEW) return;
+    if (state.finished || state.away || !EXAM) return;
     state.away = true;
     state.awayAt = Date.now();
     reader?.stop();
@@ -677,7 +704,7 @@ App.take = function take(testId, { preview = false } = {}) {
   }
 
   function installLockdown() {
-    if (PREVIEW) return;
+    if (!EXAM) return;
     document.addEventListener('visibilitychange', () => {
       if (state.finished) return;
       document.hidden ? leftTest('Switched tab or minimised') : cameBack();
@@ -754,6 +781,10 @@ App.take = function take(testId, { preview = false } = {}) {
     );
     const ov = h('div', { class: 'overlay overlay-locked', role: 'alertdialog' }, box);
     document.body.append(ov);
+    if (PREVIEW) {
+      box.append(h('button', { class: 'btn btn-primary', onclick: async () => (await enterFullscreen(), ov.remove()) }, 'Unlock (student view)'));
+      return;
+    }
     clearInterval(lockPoll);
     lockPoll = setInterval(async () => {
       try {
@@ -792,7 +823,7 @@ App.take = function take(testId, { preview = false } = {}) {
         toast(`${mins} minute${mins > 1 ? 's' : ''} left.`, 'warn');
       }
     }
-    if (left <= 0 && !PREVIEW) submit('time');
+    if (left <= 0) PREVIEW ? finish('Time is up. In a real test the saved answers would be submitted now.') : submit('time');
   }
 
   // -------------------------------------------------------------- rendering
@@ -1056,7 +1087,7 @@ App.take = function take(testId, { preview = false } = {}) {
   function renderTest() {
     const t = state.test;
     timerEl = h('span', { class: 'timer' });
-    saveEl = h('span', { class: 'save-status', text: PREVIEW ? 'Preview: nothing is saved' : 'All answers saved' });
+    saveEl = h('span', { class: 'save-status', text: PREVIEW ? 'Student view: nothing is saved' : 'All answers saved' });
     progressEl = h('span', { class: 'progress' });
     let n = 0;
     const instructions = t.instructions
@@ -1068,14 +1099,7 @@ App.take = function take(testId, { preview = false } = {}) {
       : null;
     clear(
       app,
-      PREVIEW
-        ? h(
-            'div',
-            { class: 'preview-banner' },
-            'Teacher preview: exam mode is off and nothing is saved. Read-aloud and voice answers are on. ',
-            h('a', { href: `#edit/${testId}` }, 'Back to the editor'),
-          )
-        : null,
+      previewBar(),
       h(
         'header',
         { class: 'test-bar' },
@@ -1114,7 +1138,7 @@ App.take = function take(testId, { preview = false } = {}) {
 
   async function submit(reason) {
     if (state.finished || state.submitting) return;
-    if (PREVIEW) return finish('Preview finished. In a real test the answers would now go to you for grading.');
+    if (PREVIEW) return finish('This is where the student’s answers would be submitted to you for grading.');
     state.submitting = true;
     closeRecorder();
     try {
@@ -1140,6 +1164,7 @@ App.take = function take(testId, { preview = false } = {}) {
     document.querySelectorAll('.overlay, dialog').forEach((d) => d.remove());
     clear(
       app,
+      previewBar(),
       h(
         'main',
         { class: 'center' },
@@ -1148,9 +1173,43 @@ App.take = function take(testId, { preview = false } = {}) {
           { class: 'card narrow done' },
           h('h1', { text: '✓ Done' }),
           h('p', { text: message }),
-          h('a', { class: 'btn btn-primary btn-big', href: PREVIEW ? `#edit/${testId}` : '#my' }, PREVIEW ? 'Back to the editor' : 'Back to my tests'),
+          PREVIEW
+            ? h('div', { class: 'row' }, h('a', { class: 'btn btn-primary', href: App.previewHash(testId, PV) + `&again=${Date.now()}` }, 'Start the student view again'), h('a', { class: 'btn', href: BACK }, 'Back'))
+            : h('a', { class: 'btn btn-primary btn-big', href: '#my' }, 'Back to my tests'),
         ),
       ),
+    );
+  }
+
+  // ------------------------------------------------------- student view bar
+  // The teacher's toolbar: pick a student (their accommodations) or set them
+  // by hand, and turn simulated exam mode on or off.
+
+  function previewBar() {
+    if (!PREVIEW) return null;
+    const go = (patch) => (location.hash = App.previewHash(testId, Object.assign({}, PV, patch)));
+    const who = h('select', { 'aria-label': 'See the test as', onchange: (e) => {
+      const s = (App.studentsCache || []).find((x) => x.id === e.target.value);
+      go(s ? { studentId: s.id, readAloud: s.readAloud, voiceAnswers: s.voiceAnswers, extraTimePct: s.extraTimePct } : { studentId: '' });
+    } }, h('option', { value: '' }, 'Any student'));
+    const fillStudents = (list) => {
+      for (const s of list) who.append(h('option', { value: s.id, selected: s.id === PV.studentId }, `${s.name}${s.className ? ` (${s.className})` : ''}`));
+    };
+    if (App.studentsCache) fillStudents(App.studentsCache);
+    else api('GET', '/api/users').then((r) => fillStudents((App.studentsCache = r.students))).catch(() => {});
+    const toggle = (label, key) => h('label', { class: 'pv-check' }, h('input', { type: 'checkbox', checked: !!PV[key], onchange: (e) => go({ [key]: e.target.checked, studentId: '' }) }), label);
+    const extra = h('select', { 'aria-label': 'Extra time', onchange: (e) => go({ extraTimePct: Number(e.target.value), studentId: '' }) }, [0, 25, 33, 50, 100].map((p) => h('option', { value: p, selected: p === (PV.extraTimePct || 0) }, p ? `+${p}% time` : 'No extra time')));
+    return h(
+      'div',
+      { class: 'preview-bar' },
+      h('strong', { text: '👁 Student view' }),
+      h('span', { class: 'muted', text: 'Nothing is saved.' }),
+      h('label', { class: 'pv-check' }, 'As:', who),
+      toggle('Read-aloud', 'readAloud'),
+      toggle('Voice answers', 'voiceAnswers'),
+      extra,
+      h('label', { class: 'pv-check', title: 'Full screen, warnings when you leave, and the pause, exactly as students get them' }, h('input', { type: 'checkbox', checked: !!PV.exam, onchange: (e) => go({ exam: e.target.checked }) }), 'Try exam mode'),
+      h('a', { class: 'btn btn-ghost', href: BACK }, '✕ Close'),
     );
   }
 
@@ -1186,6 +1245,7 @@ App.take = function take(testId, { preview = false } = {}) {
 
     clear(
       app,
+      previewBar(),
       h(
         'main',
         { class: 'center' },
@@ -1194,7 +1254,7 @@ App.take = function take(testId, { preview = false } = {}) {
           { class: 'card start', dir: isRtl(state.test.language) ? 'rtl' : 'ltr' },
           h('h1', { text: state.test.title }),
           h('ul', { class: 'rules' }, rules.map((r) => h('li', { text: r }))),
-          h('div', { class: 'row' }, h('a', { class: 'btn btn-ghost', href: '#my' }, 'Back'), startBtn),
+          h('div', { class: 'row' }, h('a', { class: 'btn btn-ghost', href: BACK }, 'Back'), startBtn),
         ),
       ),
     );
@@ -1211,12 +1271,25 @@ App.take = function take(testId, { preview = false } = {}) {
     reader = new Reader({ lang: state.test.language });
   }
 
+  // What the server would send when a student starts, made up locally.
+  function previewStart() {
+    const started = Date.now();
+    const limitMs = state.test.timeLimitMin * 60e3 * (1 + (PV.extraTimePct || 0) / 100);
+    return {
+      test: state.test,
+      attempt: { id: null, answers: {}, serverNow: started, deadlineAt: limitMs ? Math.round(started + limitMs) : null, violations: 0 },
+      recordings: [],
+      accommodations: state.acc,
+    };
+  }
+
   async function begin() {
-    const data = await api('POST', `/api/my/tests/${testId}/start`, { clientId: CLIENT_ID });
+    const data = PREVIEW ? previewStart() : await api('POST', `/api/my/tests/${testId}/start`, { clientId: CLIENT_ID });
     load(data);
     installLockdown();
     renderTest();
     every(tick, 1000);
+    if (PREVIEW) return;
     every(save, 15000);
     // Notice a teacher pause / end even when the student is idle.
     every(async () => {
@@ -1241,15 +1314,12 @@ App.take = function take(testId, { preview = false } = {}) {
     try {
       if (PREVIEW) {
         const { test } = await api('GET', `/api/tests/${testId}/preview`);
-        const started = Date.now();
-        load({
-          test,
-          attempt: { id: null, answers: {}, serverNow: started, deadlineAt: test.timeLimitMin ? started + test.timeLimitMin * 60e3 : null },
-          accommodations: { readAloud: true, voiceAnswers: true },
-        });
-        renderTest();
-        every(tick, 1000);
-        return;
+        state.test = test;
+        state.acc = {
+          readAloud: !!PV.readAloud || test.settings.readAloudForAll,
+          voiceAnswers: !!PV.voiceAnswers || test.settings.recordingForAll,
+        };
+        return startScreen({ timeLimitMin: test.timeLimitMin, extraTimePct: PV.extraTimePct || 0 });
       }
       const { tests } = await api('GET', '/api/my/tests');
       const info = tests.find((t) => String(t.id) === String(testId));
@@ -1261,7 +1331,7 @@ App.take = function take(testId, { preview = false } = {}) {
       startScreen({ ...info, resuming: !!info.attempt });
     } catch (e) {
       state.finished = true;
-      clear(app, h('main', { class: 'center' }, h('div', { class: 'card narrow' }, h('p', { class: 'error', text: e.message }), h('a', { class: 'btn', href: PREVIEW ? `#edit/${testId}` : '#my' }, 'Back'))));
+      clear(app, h('main', { class: 'center' }, h('div', { class: 'card narrow' }, h('p', { class: 'error', text: e.message }), h('a', { class: 'btn', href: BACK }, 'Back'))));
     }
   })();
 
@@ -1553,7 +1623,7 @@ async function testsPage() {
                 h('td', { text: t.active || '' }),
                 h('td', {}, t.toGrade ? h('span', { class: 'badge badge-warn', text: t.toGrade }) : ''),
                 h('td', { text: t.returned || '' }),
-                h('td', {}, h('div', { class: 'row tight' }, h('a', { class: 'btn btn-ghost', href: `#edit/${t.id}` }, 'Edit'), h('a', { class: 'btn btn-ghost', href: `#results/${t.id}` }, 'Results')),
+                h('td', {}, h('div', { class: 'row tight' }, h('a', { class: 'btn btn-ghost', href: App.previewHash(t.id, { back: '#tests' }), title: 'See the test exactly as students do' }, '👁 Student view'), h('a', { class: 'btn btn-ghost', href: `#edit/${t.id}` }, 'Edit'), h('a', { class: 'btn btn-ghost', href: `#results/${t.id}` }, 'Results')),
               )),
             ),
           ),
@@ -1836,7 +1906,7 @@ async function editorPage(id) {
       h(
         'div',
         { class: 'row' },
-        id !== 'new' ? h('button', { class: 'btn', onclick: async () => { if (!dirty || (await saveTest())) location.hash = `#preview/${id}`; } }, 'Preview as student') : null,
+        id !== 'new' ? h('button', { class: 'btn', onclick: async () => { if (!dirty || (await saveTest())) location.hash = App.previewHash(id, { back: `#edit/${id}` }); } }, '👁 Student view') : null,
         id !== 'new' ? h('button', { class: 'btn', onclick: exportJson }, 'Export JSON') : null,
         h('button', { class: 'btn btn-primary', onclick: saveTest }, 'Save'),
       ),
@@ -1990,6 +2060,7 @@ async function resultsPage(id) {
         'div',
         { class: 'row' },
         test.status !== 'open' ? statusBtn('open', 'Open for students') : statusBtn('closed', 'Close test'),
+        h('a', { class: 'btn', href: App.previewHash(id, { back: `#results/${id}` }) }, '👁 Student view'),
         h('a', { class: 'btn', href: `#edit/${id}` }, 'Edit'),
         h('button', {
           class: 'btn',
@@ -2210,6 +2281,7 @@ async function gradePage(attemptId) {
 // ==================================================================== people
 
 async function peoplePage() {
+  App.studentsCache = null; // the student view's "As:" list reloads after changes
   const [{ students, teachers }, settings] = await Promise.all([api('GET', '/api/users'), api('GET', '/api/settings')]);
   const classes = [...new Set(students.map((s) => s.className).filter(Boolean))].sort();
   let filter = '';
@@ -2259,7 +2331,7 @@ async function peoplePage() {
           return h(
             'tr',
             {},
-            h('td', {}, name, h('div', { class: 'muted small', text: s.email })),
+            h('td', {}, name, h('div', { class: 'muted small' }, s.email, ' · ', h('a', { href: `#studentview/${encodeURIComponent(s.id)}` }, '👁 what they see'))),
             h('td', {}, className),
             h('td', {}, h('input', { type: 'checkbox', checked: s.readAloud, 'aria-label': 'Read-aloud', onchange: (e) => update(s, { readAloud: e.target.checked }) })),
             h('td', {}, h('input', { type: 'checkbox', checked: s.voiceAnswers, 'aria-label': 'Voice answers', onchange: (e) => update(s, { voiceAnswers: e.target.checked }) })),
@@ -2396,18 +2468,85 @@ async function peoplePage() {
   draw();
 }
 
+// ============================================================ student view
+
+// #preview/<test>/<options>: options say which student or accommodations to
+// show, whether to simulate exam mode, and where "Close" goes.
+App.previewHash = function (testId, o) {
+  const p = new URLSearchParams();
+  if (o.studentId) p.set('as', o.studentId);
+  if (o.readAloud) p.set('ra', '1');
+  if (o.voiceAnswers) p.set('va', '1');
+  if (o.extraTimePct) p.set('xt', String(o.extraTimePct));
+  if (o.exam) p.set('exam', '1');
+  if (o.back) p.set('back', o.back);
+  return `#preview/${testId}/${p.toString()}`;
+};
+
+App.parsePreview = function (rest) {
+  const p = new URLSearchParams(rest || '');
+  return {
+    studentId: p.get('as') || '',
+    readAloud: p.get('ra') === '1',
+    voiceAnswers: p.get('va') === '1',
+    extraTimePct: Number(p.get('xt')) || 0,
+    exam: p.get('exam') === '1',
+    back: p.get('back') || '#tests',
+  };
+};
+
+// A student's home page, as they see it.
+async function studentHomePage(studentId) {
+  const { student: s, tests } = await api('GET', `/api/students/${encodeURIComponent(studentId)}/home`);
+  const back = `#studentview/${encodeURIComponent(s.id)}`;
+  const view = { studentId: s.id, readAloud: s.readAloud, voiceAnswers: s.voiceAnswers, extraTimePct: s.extraTimePct, back };
+  const status = (t) => {
+    const a = t.attempt;
+    if (!a) return t.testOpen ? h('a', { class: 'btn btn-primary', href: App.previewHash(t.id, view) }, 'Start (student view)') : h('span', { class: 'muted', text: 'Closed' });
+    const label = { in_progress: 'Working on it now', locked: 'Paused, waiting for you to unlock', submitted: `Submitted ${fmtDate(a.submittedAt)} · waiting for grading`, returned: 'Graded and returned' }[a.status];
+    return h('div', { class: 'row tight' }, h('span', { class: `badge badge-${a.status}`, text: label }), a.score !== null ? h('span', { class: 'badge badge-ok', text: `${a.score} / ${a.maxScore}` }) : null);
+  };
+  page(
+    h(
+      'div',
+      { class: 'preview-bar' },
+      h('strong', { text: '👁 Student view' }),
+      h('span', {}, 'This is the page ', h('strong', { text: s.name }), ' sees when they open the app.'),
+      h('span', { class: 'muted', text: [s.readAloud && 'read-aloud', s.voiceAnswers && 'voice answers', s.extraTimePct && `+${s.extraTimePct}% time`].filter(Boolean).join(' · ') || 'no accommodations' }),
+      h('a', { class: 'btn btn-ghost', href: '#people' }, '✕ Close'),
+    ),
+    h('h1', { text: `Hi ${s.name}` }),
+    tests.length
+      ? h(
+          'div',
+          { class: 'cards' },
+          tests.map((t) =>
+            h(
+              'div',
+              { class: 'card test-card' },
+              h('h2', { text: t.title }),
+              h('p', { class: 'muted' }, `${t.questionCount} questions`, t.timeLimitMin ? ` · ${Math.round(t.timeLimitMin * (1 + t.extraTimePct / 100))} minutes` : ' · no time limit'),
+              status(t),
+            ),
+          ),
+        )
+      : h('p', { class: 'muted', text: 'No tests for them right now. A test shows up here when it is Open and set for their class (or for all classes).' }),
+  );
+}
+
 // ==================================================================== router
 
 function route() {
   App.route();
 }
 
-App.teacherRoute = async function (name, arg) {
+App.teacherRoute = async function (name, arg, rest) {
   clearTimeout(refreshTimer);
   leaveGuard = null;
   try {
-    if (name === 'preview') return App.take(arg, { preview: true });
-    if (name === 'edit') await editorPage(arg);
+    if (name === 'preview') return App.take(arg, { preview: true, view: App.parsePreview(rest) });
+    if (name === 'studentview') await studentHomePage(arg);
+    else if (name === 'edit') await editorPage(arg);
     else if (name === 'results') await resultsPage(arg);
     else if (name === 'grade') await gradePage(arg);
     else if (name === 'people') await peoplePage();
@@ -2448,9 +2587,9 @@ App.teacherHasUnsaved = () => !!(leaveGuard && leaveGuard());
   }
 
   App.route = function () {
-    const [name, arg] = location.hash.slice(1).split('/');
+    const [name, arg, ...rest] = location.hash.slice(1).split('/');
     const role = BOOT.user.role;
-    if (role === 'teacher') App.teacherRoute(name || 'tests', arg && decodeURIComponent(arg));
+    if (role === 'teacher') App.teacherRoute(name || 'tests', arg && decodeURIComponent(arg), rest.join('/'));
     else if (role === 'student') App.studentRoute(name || 'my', arg && decodeURIComponent(arg));
     else notOnList();
   };

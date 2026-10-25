@@ -25,9 +25,9 @@
   }
 
   App.route = function () {
-    const [name, arg] = location.hash.slice(1).split('/');
+    const [name, arg, ...rest] = location.hash.slice(1).split('/');
     const role = BOOT.user.role;
-    if (role === 'teacher') App.teacherRoute(name || 'tests', arg && decodeURIComponent(arg));
+    if (role === 'teacher') App.teacherRoute(name || 'tests', arg && decodeURIComponent(arg), rest.join('/'));
     else if (role === 'student') App.studentRoute(name || 'my', arg && decodeURIComponent(arg));
     else notOnList();
   };

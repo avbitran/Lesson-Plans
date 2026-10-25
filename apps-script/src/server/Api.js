@@ -436,7 +436,8 @@ function createApi(env) {
 
   // ------------------------------------------------------------ students
 
-  route('GET', '/api/my/tests', 'student', ({ user }) => {
+  // A student's home page: open tests for their class plus any they've started.
+  function homeTests(user) {
     sweepExpired(db.all('attempts', true).filter((a) => a.studentId === user.id));
     const attempts = new Map(
       db
@@ -473,6 +474,15 @@ function createApi(env) {
           };
         }),
     };
+  }
+
+  route('GET', '/api/my/tests', 'student', ({ user }) => homeTests(user));
+
+  // The teacher's 👁 view of one student's home page.
+  route('GET', '/api/students/:id/home', 'teacher', ({ params }) => {
+    const s = db.get('students', params.id);
+    if (!s) throw new HttpError(404, 'Student not found.');
+    return Object.assign({ student: publicStudent(s) }, homeTests({ id: s.id, className: s.className, extraTimePct: s.extraTimePct || 0 }));
   });
 
   // The rules shown before starting; does not start the clock.

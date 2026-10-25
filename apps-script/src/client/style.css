@@ -274,3 +274,9 @@ textarea { width: 100%; resize: vertical; }
 .ai-step h3 { display: flex; align-items: center; gap: .5rem; margin: .2rem 0 .5rem; font-size: 1.05rem; }
 .mono-small { font: .82rem/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
 .modal { max-height: calc(100vh - 32px); }
+
+.preview-bar { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem 1rem; padding: .55rem 16px; background: var(--warn-soft); color: var(--text); border-bottom: 2px solid var(--warn); font-size: .95rem; }
+.wrap > .preview-bar { border: 2px solid var(--warn); border-radius: var(--radius); margin-bottom: 1rem; }
+.preview-bar strong:first-child { color: var(--warn); }
+.pv-check { display: inline-flex; align-items: center; gap: .35rem; }
+.preview-bar select { padding: .25rem .4rem; }

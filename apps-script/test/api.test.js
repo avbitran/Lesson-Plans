@@ -224,3 +224,19 @@ test('multiple correct answers: partial and all-or-nothing marking', () => {
   assert.equal(d.auto.r.review, false);
   assert.equal(core.autoGrade(data.questions && { questions: [{ ...saved, points: 3, correct: [0, 1, 2] }] }, { p: [0, 1] }, new Set()).p.auto, 2);
 });
+
+test("teacher can see a student's home page", () => {
+  const { teacher, asStudent, call } = setup();
+  call(teacher, 'POST', '/api/students/bulk', { people: [{ email: 'a@school.org', name: 'A', className: '9-1' }] });
+  call(teacher, 'PUT', '/api/students/a@school.org', { extraTimePct: 50 });
+  const open = call(teacher, 'POST', '/api/tests', { data: { ...sample, classes: ['9-1'] } }).body.id;
+  const other = call(teacher, 'POST', '/api/tests', { data: { ...sample, title: 'Other class', classes: ['9-2'] } }).body.id;
+  call(teacher, 'PUT', `/api/tests/${open}`, { status: 'open' });
+  call(teacher, 'PUT', `/api/tests/${other}`, { status: 'open' });
+  const home = call(teacher, 'GET', '/api/students/a@school.org/home').body;
+  assert.equal(home.student.name, 'A');
+  assert.deepEqual(home.tests.map((t) => t.id), [open]);
+  assert.equal(home.tests[0].extraTimePct, 50);
+  assert.deepEqual(home.tests, call(asStudent('a@school.org'), 'GET', '/api/my/tests').body.tests);
+  assert.equal(call(asStudent('a@school.org'), 'GET', '/api/students/a@school.org/home').status, 403);
+});

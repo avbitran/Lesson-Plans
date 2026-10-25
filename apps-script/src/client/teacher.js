@@ -65,7 +65,7 @@ async function testsPage() {
                 h('td', { text: t.active || '' }),
                 h('td', {}, t.toGrade ? h('span', { class: 'badge badge-warn', text: t.toGrade }) : ''),
                 h('td', { text: t.returned || '' }),
-                h('td', {}, h('div', { class: 'row tight' }, h('a', { class: 'btn btn-ghost', href: `#edit/${t.id}` }, 'Edit'), h('a', { class: 'btn btn-ghost', href: `#results/${t.id}` }, 'Results')),
+                h('td', {}, h('div', { class: 'row tight' }, h('a', { class: 'btn btn-ghost', href: App.previewHash(t.id, { back: '#tests' }), title: 'See the test exactly as students do' }, '👁 Student view'), h('a', { class: 'btn btn-ghost', href: `#edit/${t.id}` }, 'Edit'), h('a', { class: 'btn btn-ghost', href: `#results/${t.id}` }, 'Results')),
               )),
             ),
           ),
@@ -348,7 +348,7 @@ async function editorPage(id) {
       h(
         'div',
         { class: 'row' },
-        id !== 'new' ? h('button', { class: 'btn', onclick: async () => { if (!dirty || (await saveTest())) location.hash = `#preview/${id}`; } }, 'Preview as student') : null,
+        id !== 'new' ? h('button', { class: 'btn', onclick: async () => { if (!dirty || (await saveTest())) location.hash = App.previewHash(id, { back: `#edit/${id}` }); } }, '👁 Student view') : null,
         id !== 'new' ? h('button', { class: 'btn', onclick: exportJson }, 'Export JSON') : null,
         h('button', { class: 'btn btn-primary', onclick: saveTest }, 'Save'),
       ),
@@ -502,6 +502,7 @@ async function resultsPage(id) {
         'div',
         { class: 'row' },
         test.status !== 'open' ? statusBtn('open', 'Open for students') : statusBtn('closed', 'Close test'),
+        h('a', { class: 'btn', href: App.previewHash(id, { back: `#results/${id}` }) }, '👁 Student view'),
         h('a', { class: 'btn', href: `#edit/${id}` }, 'Edit'),
         h('button', {
           class: 'btn',
@@ -722,6 +723,7 @@ async function gradePage(attemptId) {
 // ==================================================================== people
 
 async function peoplePage() {
+  App.studentsCache = null; // the student view's "As:" list reloads after changes
   const [{ students, teachers }, settings] = await Promise.all([api('GET', '/api/users'), api('GET', '/api/settings')]);
   const classes = [...new Set(students.map((s) => s.className).filter(Boolean))].sort();
   let filter = '';
@@ -771,7 +773,7 @@ async function peoplePage() {
           return h(
             'tr',
             {},
-            h('td', {}, name, h('div', { class: 'muted small', text: s.email })),
+            h('td', {}, name, h('div', { class: 'muted small' }, s.email, ' · ', h('a', { href: `#studentview/${encodeURIComponent(s.id)}` }, '👁 what they see'))),
             h('td', {}, className),
             h('td', {}, h('input', { type: 'checkbox', checked: s.readAloud, 'aria-label': 'Read-aloud', onchange: (e) => update(s, { readAloud: e.target.checked }) })),
             h('td', {}, h('input', { type: 'checkbox', checked: s.voiceAnswers, 'aria-label': 'Voice answers', onchange: (e) => update(s, { voiceAnswers: e.target.checked }) })),
@@ -908,18 +910,85 @@ async function peoplePage() {
   draw();
 }
 
+// ============================================================ student view
+
+// #preview/<test>/<options>: options say which student or accommodations to
+// show, whether to simulate exam mode, and where "Close" goes.
+App.previewHash = function (testId, o) {
+  const p = new URLSearchParams();
+  if (o.studentId) p.set('as', o.studentId);
+  if (o.readAloud) p.set('ra', '1');
+  if (o.voiceAnswers) p.set('va', '1');
+  if (o.extraTimePct) p.set('xt', String(o.extraTimePct));
+  if (o.exam) p.set('exam', '1');
+  if (o.back) p.set('back', o.back);
+  return `#preview/${testId}/${p.toString()}`;
+};
+
+App.parsePreview = function (rest) {
+  const p = new URLSearchParams(rest || '');
+  return {
+    studentId: p.get('as') || '',
+    readAloud: p.get('ra') === '1',
+    voiceAnswers: p.get('va') === '1',
+    extraTimePct: Number(p.get('xt')) || 0,
+    exam: p.get('exam') === '1',
+    back: p.get('back') || '#tests',
+  };
+};
+
+// A student's home page, as they see it.
+async function studentHomePage(studentId) {
+  const { student: s, tests } = await api('GET', `/api/students/${encodeURIComponent(studentId)}/home`);
+  const back = `#studentview/${encodeURIComponent(s.id)}`;
+  const view = { studentId: s.id, readAloud: s.readAloud, voiceAnswers: s.voiceAnswers, extraTimePct: s.extraTimePct, back };
+  const status = (t) => {
+    const a = t.attempt;
+    if (!a) return t.testOpen ? h('a', { class: 'btn btn-primary', href: App.previewHash(t.id, view) }, 'Start (student view)') : h('span', { class: 'muted', text: 'Closed' });
+    const label = { in_progress: 'Working on it now', locked: 'Paused, waiting for you to unlock', submitted: `Submitted ${fmtDate(a.submittedAt)} · waiting for grading`, returned: 'Graded and returned' }[a.status];
+    return h('div', { class: 'row tight' }, h('span', { class: `badge badge-${a.status}`, text: label }), a.score !== null ? h('span', { class: 'badge badge-ok', text: `${a.score} / ${a.maxScore}` }) : null);
+  };
+  page(
+    h(
+      'div',
+      { class: 'preview-bar' },
+      h('strong', { text: '👁 Student view' }),
+      h('span', {}, 'This is the page ', h('strong', { text: s.name }), ' sees when they open the app.'),
+      h('span', { class: 'muted', text: [s.readAloud && 'read-aloud', s.voiceAnswers && 'voice answers', s.extraTimePct && `+${s.extraTimePct}% time`].filter(Boolean).join(' · ') || 'no accommodations' }),
+      h('a', { class: 'btn btn-ghost', href: '#people' }, '✕ Close'),
+    ),
+    h('h1', { text: `Hi ${s.name}` }),
+    tests.length
+      ? h(
+          'div',
+          { class: 'cards' },
+          tests.map((t) =>
+            h(
+              'div',
+              { class: 'card test-card' },
+              h('h2', { text: t.title }),
+              h('p', { class: 'muted' }, `${t.questionCount} questions`, t.timeLimitMin ? ` · ${Math.round(t.timeLimitMin * (1 + t.extraTimePct / 100))} minutes` : ' · no time limit'),
+              status(t),
+            ),
+          ),
+        )
+      : h('p', { class: 'muted', text: 'No tests for them right now. A test shows up here when it is Open and set for their class (or for all classes).' }),
+  );
+}
+
 // ==================================================================== router
 
 function route() {
   App.route();
 }
 
-App.teacherRoute = async function (name, arg) {
+App.teacherRoute = async function (name, arg, rest) {
   clearTimeout(refreshTimer);
   leaveGuard = null;
   try {
-    if (name === 'preview') return App.take(arg, { preview: true });
-    if (name === 'edit') await editorPage(arg);
+    if (name === 'preview') return App.take(arg, { preview: true, view: App.parsePreview(rest) });
+    if (name === 'studentview') await studentHomePage(arg);
+    else if (name === 'edit') await editorPage(arg);
     else if (name === 'results') await resultsPage(arg);
     else if (name === 'grade') await gradePage(arg);
     else if (name === 'people') await peoplePage();
