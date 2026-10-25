@@ -16,9 +16,24 @@ const scripts = ['common.js', 'speech.js', 'take.js', 'student.js', 'ai-import.j
 if (/<\?|\?>|<\/script/i.test(scripts + src('client', 'style.css'))) {
   throw new Error('Client code contains "<?", "?>" or "</script", which would break the Apps Script template.');
 }
+// Google rewrites inline scripts when it serves an Apps Script page, and the
+// rewritten code can stop parsing ("Failed to execute 'write' on 'Document'").
+// So the app's code travels as base64 (nothing for Google to rewrite) and a
+// tiny loader decodes it and runs it as an ordinary script.
+const encoded = Buffer.from(`${scripts}\n//# sourceURL=online-tests.js\n`, 'utf8').toString('base64');
+const loader = [
+  '(function () {',
+  `  var b = atob('${encoded}');`,
+  '  var bytes = new Uint8Array(b.length);',
+  '  for (var i = 0; i < b.length; i++) bytes[i] = b.charCodeAt(i);',
+  "  var s = document.createElement('script');",
+  '  s.textContent = new TextDecoder().decode(bytes);',
+  '  document.body.appendChild(s);',
+  '})();',
+].join('\n');
 const html = src('client', 'index.html')
   .replace('/*STYLE*/', () => src('client', 'style.css').trim())
-  .replace('/*SCRIPTS*/', () => scripts)
+  .replace('/*SCRIPTS*/', () => loader)
   .replace('<!DOCTYPE html>', `<!DOCTYPE html>\n<!-- ${banner('pages; already included in Code.gs')} -->`);
 
 // The pages ride along inside Code.gs, so there is only one file to paste.

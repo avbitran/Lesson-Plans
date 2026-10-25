@@ -21,7 +21,8 @@
         app.querySelector('.error').textContent = message;
       }
       window.addEventListener('error', function (e) {
-        showFatal(e.message + (e.lineno ? ' (line ' + e.lineno + ')' : ''));
+        var where = (e.filename || '').split('/').pop();
+        showFatal(e.message + (e.lineno ? ' (' + (where ? where + ', ' : '') + 'line ' + e.lineno + ')' : ''));
       });
       window.addEventListener('unhandledrejection', function (e) {
         showFatal(String((e.reason && e.reason.message) || e.reason));

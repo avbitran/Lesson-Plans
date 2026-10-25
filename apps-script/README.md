@@ -114,4 +114,5 @@ node test/harness.js   # the real pages with a fake google.script.run: http://lo
 
 - `src/server/`: `Core.js` (test validation, auto-marking), `Api.js` (all routes; storage passed in), `Store.js` (Sheets tables, JSON split across cells), `Main.js` (`doGet`, `rpc`, identity, Drive).
 - `src/client/`: the pages (plain JavaScript, hash routing), inlined into `Index.html` and embedded in `Code.gs` as `INDEX_HTML`.
+- The page code is shipped base64-encoded and decoded by a small loader. Google rewrites inline scripts when it serves Apps Script pages, and the rewritten code can stop parsing ("Failed to execute 'write' on 'Document'"). `node test/harness.js` then `/google?as=teacher` loads the page with `document.write` in an iframe, the way Google's wrapper does.
 - `recorder.html`: the pop-up recorder for GitHub Pages. It only talks to `*.googleusercontent.com` pages.

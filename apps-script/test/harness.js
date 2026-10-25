@@ -81,6 +81,17 @@ http
       );
       return res.end(page);
     }
+    if (url.pathname === '/google') {
+      // Imitate Google's wrapper: an iframe whose page is written in with
+      // document.write. Open /google?as=teacher
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      return res.end(`<!doctype html><body style="margin:0"><iframe id="f" style="border:0;width:100vw;height:100vh"></iframe><script>
+        fetch('/' + location.search).then((r) => r.text()).then((html) => {
+          const d = document.getElementById('f').contentDocument;
+          d.open(); d.write(html); d.close();
+        });
+      </script></body>`);
+    }
     if (url.pathname === '/') {
       const boot = JSON.stringify({ user: userFor(url.searchParams.get('as')), recorderUrl: api.handle('GET', '/api/settings', null, userFor('teacher')).recorderUrl });
       const html = fs.readFileSync(path.join(__dirname, '..', 'dist', 'Index.html'), 'utf8')
