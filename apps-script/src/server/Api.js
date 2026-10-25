@@ -5,6 +5,7 @@
 const DEADLINE_GRACE_MS = 30e3; // network slack for the last autosave
 const MAX_EVENTS_PER_ATTEMPT = 1000;
 const MAX_AUDIO_BASE64 = 14 * 1024 * 1024; // about 10 MB of audio
+const AUDIO_BUDGET_MS = 40e3; // natural-voice audio made per request, then the page asks again
 const COUNTED_EVENTS = ['left', 'fullscreen_exit'];
 const LOGGED_EVENTS = ['returned', 'paste_blocked', 'copy_blocked', 'shortcut_blocked', 'fullscreen_refused', 'recorder_opened'];
 
@@ -17,6 +18,7 @@ class HttpError extends Error {
 
 function createApi(env) {
   const { db, files, withLock, exportResults } = env;
+  const clock = env.clock || (() => Date.now()); // real time, for work budgets
   const now = env.now || (() => Date.now());
   const routes = [];
   const route = (method, pattern, role, handler) => {
@@ -92,6 +94,51 @@ function createApi(env) {
     db.remove('attempts', a.id);
   }
 
+  // ------------------------------------------------- natural-voice audio
+  // Audio is made once per piece of text and voice, stored in Drive, and
+  // shared by every test that reads the same text with the same voice.
+
+  const voiceOf = (test) => (test.settings && test.settings.voice) || { provider: 'browser', name: '' };
+  const naturalVoice = (test) => voiceOf(test).provider !== 'browser' && !!env.tts;
+  const clipId = (voice, lang, text) => env.hash(`${voice.provider}|${voice.name}|${lang}|${text}`).slice(0, 24);
+
+  let audioIds = null;
+  const audioReady = (id) => (audioIds ||= new Set(db.all('audio', true).map((x) => x.id))).has(id);
+
+  // studentView's audio lookup for one test.
+  const audioFor = (test) => {
+    if (!naturalVoice(test)) return null;
+    const v = voiceOf(test);
+    return (text) => {
+      const id = clipId(v, test.language, text);
+      return audioReady(id) ? id : null;
+    };
+  };
+  const viewOf = (test) => studentView(test, audioFor(test));
+
+  // Every piece of text a test reads aloud.
+  const speechList = (test) => {
+    const view = studentView(test);
+    return [view.instructionsSpeech].concat(view.questions.map((q) => q.speech)).filter(Boolean);
+  };
+
+  function audioStatus(test) {
+    const v = voiceOf(test);
+    if (!naturalVoice(test)) return { provider: v.provider, total: 0, ready: 0, missing: 0 };
+    const texts = [...new Set(speechList(test))];
+    const ready = texts.filter((t) => audioReady(clipId(v, test.language, t))).length;
+    return { provider: v.provider, total: texts.length, ready, missing: texts.length - ready };
+  }
+
+  function makeClip(test, text) {
+    const v = voiceOf(test);
+    const id = clipId(v, test.language, text);
+    const pieces = env.tts.synthesize({ provider: v.provider, voice: v.name, language: test.language, text });
+    const parts = pieces.map((p, i) => ({ fileId: files.save(`read-aloud ${id} ${i + 1}.${p.mime.includes('wav') ? 'wav' : 'mp3'}`, p.mime, p.data, 'audio'), mime: p.mime }));
+    db.insert('audio', { id, provider: v.provider, voice: v.name, chars: text.length, createdAt: now(), parts });
+    audioIds && audioIds.add(id);
+  }
+
   const canRecord = (user, test) => !!user.voiceAnswers || test.settings.recordingForAll;
   const sameClass = (test, className) => {
     const classes = test.classes.map((c) => c.toLowerCase());
@@ -111,6 +158,16 @@ function createApi(env) {
         if (picks.length && picks.length <= q.correct.length) out[q.id] = picks;
       } else if (q.type === 'mc') {
         if (validOption(v)) out[q.id] = v;
+      } else if (q.type === 'blanks' || q.type === 'match') {
+        // One string per blank / per item to match. Matching answers must be
+        // one of the choices.
+        const n = q.type === 'blanks' ? parseBlanks(q.prompt).length : q.pairs.length;
+        const choices = q.type === 'match' ? new Set(matchChoices(q)) : null;
+        const list = (Array.isArray(v) ? v : []).slice(0, n).map((x) => {
+          const t = typeof x === 'string' ? x.slice(0, 500) : '';
+          return choices && !choices.has(t) ? '' : t;
+        });
+        if (list.some((x) => x.trim())) out[q.id] = list;
       } else if (typeof v === 'string') {
         out[q.id] = v.slice(0, 20000);
       }
@@ -130,7 +187,7 @@ function createApi(env) {
         answers: a.answers,
         violations: a.violations || 0,
       },
-      test: studentView(test),
+      test: viewOf(test),
       recordings: recordingsOf(a.id).map((r) => ({ id: r.id, questionId: r.questionId, duration: r.duration })),
       accommodations: {
         readAloud: !!user.readAloud || test.settings.readAloudForAll,
@@ -294,7 +351,44 @@ function createApi(env) {
     return { ok: true };
   });
 
-  route('GET', '/api/tests/:id/preview', 'teacher', ({ params }) => ({ test: studentView(getTest(params.id).data) }));
+  route('GET', '/api/tests/:id/preview', 'teacher', ({ params }) => ({ test: viewOf(getTest(params.id).data) }));
+
+  route('GET', '/api/tests/:id/audio', 'teacher', ({ params }) => audioStatus(getTest(params.id).data));
+
+  // Makes missing natural-voice audio for a test, for up to ~40 seconds per
+  // call; the page keeps calling until nothing is missing.
+  route('POST', '/api/tests/:id/audio', 'teacher', ({ params }) => {
+    const test = getTest(params.id).data;
+    if (!naturalVoice(test)) throw new HttpError(400, 'This test uses the device voice, so there is no audio to prepare.');
+    const v = voiceOf(test);
+    const started = clock();
+    let made = 0;
+    for (const text of [...new Set(speechList(test))]) {
+      if (audioReady(clipId(v, test.language, text))) continue;
+      if (made > 0 && clock() - started > AUDIO_BUDGET_MS) break;
+      makeClip(test, text);
+      made++;
+    }
+    return Object.assign(audioStatus(test), { made });
+  });
+
+  // ▶ Try voice in the test editor: a short sample, not stored.
+  route('POST', '/api/voices/try', 'teacher', ({ body }) => {
+    if (!env.tts) throw new HttpError(400, 'Natural voices are not available here.');
+    const provider = VOICE_PROVIDERS.includes(body.provider) && body.provider !== 'browser' ? body.provider : null;
+    if (!provider) throw new HttpError(400, 'Choose Google or Chatterbox to try a natural voice.');
+    const text = String(body.text || '').trim().slice(0, 300) || 'Hello! This is how I will read your test to your students.';
+    const language = LANGUAGES.includes(body.language) ? body.language : 'en-US';
+    const pieces = env.tts.synthesize({ provider, voice: String(body.name || '').slice(0, 100), language, text });
+    return pieces[0];
+  });
+
+  route('GET', '/api/audio/:id/:n', 'any', ({ params }) => {
+    const clip = db.get('audio', params.id);
+    const part = clip && clip.parts && clip.parts[Number(params.n)];
+    if (!part) throw new HttpError(404, 'Audio not found.');
+    return { mime: part.mime, data: files.read(part.fileId), count: clip.parts.length };
+  });
 
   function attemptRows(testId) {
     sweepExpired(db.all('attempts', true).filter((a) => a.testId === testId));
@@ -651,6 +745,19 @@ function createApi(env) {
   // ------------------------------------------------------------ settings
 
   route('GET', '/api/settings', 'teacher', () => env.settings.get());
+
+  // Keys stay on the server: the page only learns whether one is saved.
+  route('PUT', '/api/settings/voices', 'teacher', ({ body }) => {
+    const url = body.chatterboxUrl === undefined ? undefined : String(body.chatterboxUrl || '').trim().replace(/\/+$/, '');
+    if (url) {
+      if (!/^https?:\/\/[^\s"'<>]+$/.test(url)) throw new HttpError(400, 'The Chatterbox address must start with https:// (or http://).');
+      if (/^https?:\/\/(localhost|127\.|0\.0\.0\.0|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/i.test(url))
+        throw new HttpError(400, 'That address only works on your own computer or network, and Google’s servers can’t reach it. Use a public address, for example from a Cloudflare tunnel (see the instructions).');
+    }
+    const clean = (v) => (v === undefined ? undefined : String(v || '').trim().slice(0, 500));
+    env.settings.setVoices({ googleKey: clean(body.googleKey), chatterboxUrl: url, chatterboxKey: clean(body.chatterboxKey) });
+    return env.settings.get();
+  });
 
   route('PUT', '/api/settings', 'teacher', ({ body }) => {
     const url = String(body.recorderUrl || '').trim();

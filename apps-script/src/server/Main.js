@@ -30,8 +30,16 @@ function spreadsheet_() {
 }
 
 function recordingsFolder_() {
+  return folder_('RECORDINGS_FOLDER_ID', 'Online Tests – voice answers');
+}
+
+function audioFolder_() {
+  return folder_('AUDIO_FOLDER_ID', 'Online Tests – read-aloud audio');
+}
+
+function folder_(prop, title) {
   const props = PropertiesService.getScriptProperties();
-  const id = props.getProperty('RECORDINGS_FOLDER_ID');
+  const id = props.getProperty(prop);
   if (id) {
     try {
       return DriveApp.getFolderById(id);
@@ -41,12 +49,12 @@ function recordingsFolder_() {
   }
   let folder;
   try {
-    folder = DriveApp.createFolder('Online Tests – voice answers');
+    folder = DriveApp.createFolder(title);
   } catch (e) {
     if (/permission/i.test(String(e && e.message))) throw new HttpError(503, DRIVE_PERMISSION_HELP);
     throw e;
   }
-  props.setProperty('RECORDINGS_FOLDER_ID', folder.getId());
+  props.setProperty(prop, folder.getId());
   return folder;
 }
 
@@ -64,6 +72,9 @@ function authorize() {
   if (typeof ScriptApp.requireAllScopes === 'function') ScriptApp.requireAllScopes(ScriptApp.AuthMode.FULL);
   const ss = spreadsheet_();
   const folder = recordingsFolder_();
+  audioFolder_();
+  // Natural voices call Google's or Chatterbox's speech service from here.
+  UrlFetchApp.getRequest('https://texttospeech.googleapis.com/');
   console.log('All set. Data: ' + ss.getUrl() + '  Voice answers: ' + folder.getUrl());
 }
 
@@ -86,10 +97,15 @@ function env_(db) {
     db,
     ownerEmail: Session.getEffectiveUser().getEmail().toLowerCase(),
     withLock: withLock_,
+    hash: (text) =>
+      Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, text, Utilities.Charset.UTF_8)
+        .map((b) => ((b + 256) % 256).toString(16).padStart(2, '0'))
+        .join(''),
+    tts: { synthesize: ttsSynthesize_ },
     files: {
-      save(name, mime, base64) {
+      save(name, mime, base64, kind) {
         const blob = Utilities.newBlob(Utilities.base64Decode(base64), mime, name);
-        return recordingsFolder_().createFile(blob).getId();
+        return (kind === 'audio' ? audioFolder_() : recordingsFolder_()).createFile(blob).getId();
       },
       read(id) {
         return Utilities.base64Encode(DriveApp.getFileById(id).getBlob().getBytes());
@@ -118,6 +134,11 @@ function env_(db) {
         const p = PropertiesService.getScriptProperties();
         return {
           recorderUrl: p.getProperty('RECORDER_URL') || DEFAULT_RECORDER_URL,
+          voices: {
+            googleKeySet: !!p.getProperty('GOOGLE_TTS_KEY'),
+            chatterboxUrl: p.getProperty('CHATTERBOX_URL') || '',
+            chatterboxKeySet: !!p.getProperty('CHATTERBOX_KEY'),
+          },
           spreadsheetUrl: spreadsheet_().getUrl(),
           recordingsUrl: (() => {
             try {
@@ -133,8 +154,98 @@ function env_(db) {
         if (s.recorderUrl) p.setProperty('RECORDER_URL', s.recorderUrl);
         else p.deleteProperty('RECORDER_URL');
       },
+      // undefined = leave as it is, '' = remove.
+      setVoices(v) {
+        const p = PropertiesService.getScriptProperties();
+        const put = (key, val) => {
+          if (val === undefined) return;
+          if (val) p.setProperty(key, val);
+          else p.deleteProperty(key);
+        };
+        put('GOOGLE_TTS_KEY', v.googleKey);
+        put('CHATTERBOX_URL', v.chatterboxUrl);
+        put('CHATTERBOX_KEY', v.chatterboxKey);
+      },
     },
   };
+}
+
+// ------------------------------------------------------- natural voices
+// Each returns a list of { mime, data (base64) } pieces, played in order.
+
+function ttsSynthesize_(o) {
+  const p = PropertiesService.getScriptProperties();
+  if (o.provider === 'google') return googleTts_(p.getProperty('GOOGLE_TTS_KEY'), o);
+  if (o.provider === 'chatterbox') return chatterboxTts_(p.getProperty('CHATTERBOX_URL'), p.getProperty('CHATTERBOX_KEY'), o);
+  throw new HttpError(400, 'Unknown voice.');
+}
+
+// Google Cloud Text-to-Speech. A voice name like "en-US-Neural2-F" also
+// says its language; stretches in another language (Hebrew inside an English
+// test) use Google's default voice for that language.
+function googleTts_(key, o) {
+  if (!key) throw new HttpError(400, 'Add your Google Cloud key first: Students → Settings → Read-aloud voices.');
+  const nameLang = o.voice ? o.voice.split('-').slice(0, 2).join('-') : '';
+  return ttsPieces(o.text, nameLang || o.language, 1500).map((piece) => {
+    const own = o.voice && piece.lang.slice(0, 2) === nameLang.slice(0, 2);
+    const body = {
+      input: { text: piece.text },
+      voice: own ? { languageCode: nameLang, name: o.voice } : { languageCode: piece.lang },
+      audioConfig: { audioEncoding: 'MP3' },
+    };
+    const res = UrlFetchApp.fetch('https://texttospeech.googleapis.com/v1/text:synthesize?key=' + encodeURIComponent(key), {
+      method: 'post',
+      contentType: 'application/json',
+      payload: JSON.stringify(body),
+      muteHttpExceptions: true,
+    });
+    if (res.getResponseCode() !== 200) throw new HttpError(502, googleTtsError_(res));
+    return { mime: 'audio/mpeg', data: JSON.parse(res.getContentText()).audioContent };
+  });
+}
+
+function googleTtsError_(res) {
+  let msg = '';
+  try {
+    msg = JSON.parse(res.getContentText()).error.message || '';
+  } catch (e) {
+    msg = res.getContentText().slice(0, 200);
+  }
+  if (/has not been used|is disabled|SERVICE_DISABLED/i.test(msg))
+    return 'Google says the Text-to-Speech API is not turned on for your Cloud project. Turn it on (see the instructions) and try again in a few minutes.';
+  if (/billing/i.test(msg)) return 'Google says your Cloud project needs a billing account before it can make voices.';
+  if (/API key not valid|API_KEY_INVALID/i.test(msg)) return 'Google says the key is not valid. Copy it again from the Google Cloud console.';
+  if (/voice/i.test(msg) && /not exist|invalid|unsupported/i.test(msg)) return 'Google does not have a voice with that name. Check the spelling, e.g. en-US-Neural2-F.';
+  return 'Google could not make the audio: ' + msg;
+}
+
+// Chatterbox (or any server with the OpenAI-style /v1/audio/speech address).
+// Sentences go in short pieces, which Chatterbox handles best.
+function chatterboxTts_(url, key, o) {
+  if (!url) throw new HttpError(400, 'Add your Chatterbox address first: Students → Settings → Read-aloud voices.');
+  const endpoint = /\/v1\/audio\/speech$/.test(url) ? url : url.replace(/\/+$/, '') + '/v1/audio/speech';
+  return ttsPieces(o.text, o.language, 300).map((piece) => {
+    const body = { model: 'chatterbox', input: piece.text, response_format: 'mp3' };
+    if (o.voice) body.voice = o.voice;
+    if (piece.lang.slice(0, 2) !== 'en') body.language = piece.lang.slice(0, 2);
+    let res;
+    try {
+      res = UrlFetchApp.fetch(endpoint, {
+        method: 'post',
+        contentType: 'application/json',
+        payload: JSON.stringify(body),
+        headers: key ? { Authorization: 'Bearer ' + key } : {},
+        muteHttpExceptions: true,
+      });
+    } catch (e) {
+      throw new HttpError(502, 'Could not reach your Chatterbox server at ' + url + '. Is the computer on and the tunnel running?');
+    }
+    const code = res.getResponseCode();
+    const mime = String(res.getHeaders()['Content-Type'] || res.getHeaders()['content-type'] || '').split(';')[0].trim();
+    if (code !== 200 || !/^audio\//.test(mime))
+      throw new HttpError(502, 'Your Chatterbox server answered with an error (' + code + '): ' + res.getContentText().slice(0, 200));
+    return { mime, data: Utilities.base64Encode(res.getContent()) };
+  });
 }
 
 // Who is visiting. Works because the app runs as the teacher and is shared
@@ -176,8 +287,11 @@ function rpc(method, path, body) {
     const user = currentUser_(db, env.ownerEmail);
     const api = createApi(env);
     // Teacher edits are rare; serialising them avoids row shifts mid-write.
+    // Making audio and trying voices take long and only add rows, so they
+    // don't hold the lock (students starting a test need it).
     const run = () => api.handle(method, path, body, user);
-    const data = user.role === 'teacher' && method !== 'GET' ? withLock_(run) : run();
+    const slow = /\/audio$|^\/api\/voices\/try$/.test(path);
+    const data = user.role === 'teacher' && method !== 'GET' && !slow ? withLock_(run) : run();
     return JSON.stringify({ ok: true, data: data === undefined ? null : data });
   } catch (e) {
     const status = e instanceof ValidationError ? 400 : e.status || 500;

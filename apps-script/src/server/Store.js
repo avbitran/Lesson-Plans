@@ -13,6 +13,8 @@ const SCHEMAS = {
   ],
   events: ['id', 'attemptId', 'at:num', 'type', 'detail', 'counted:bool'],
   recordings: ['id', 'attemptId', 'questionId', 'fileId', 'mime', 'size:num', 'duration:num', 'createdAt:num'],
+  // Natural-voice read-aloud audio: id = hash of voice + text; parts = [{ fileId, mime }].
+  audio: ['id', 'provider', 'voice', 'chars:num', 'createdAt:num', 'parts:json:1'],
 };
 const JSON_CHUNK = 45000;
 

@@ -45,9 +45,16 @@
     );
   }
 
+  const parseKeys = (prompt) => {
+    const out = [];
+    String(prompt).replace(/\{([^{}]*)\}/g, (_, inner) => out.push(inner.split('|').map((x) => x.trim()).filter(Boolean)));
+    return out;
+  };
+
   function answerText(q, a) {
     if (a === undefined || a === null || a === '' || (Array.isArray(a) && !a.length)) return '—';
     if (q.type === 'mc') return optionText(q, a);
+    if (Array.isArray(a)) return a.map((x, i) => `${i + 1}. ${x || '—'}`).join('   ');
     return a;
   }
 
@@ -76,13 +83,17 @@
                   'div',
                   { class: 'q-head' },
                   h('span', { class: 'q-num', text: ++n }),
-                  h('div', { class: 'q-text' }, q.title ? h('strong', { text: q.title }) : null, h('div', { class: 'prompt', text: q.prompt })),
+                  h('div', { class: 'q-text' }, q.title ? h('strong', { text: q.title }) : null, h('div', { class: 'prompt', dir: 'auto', text: q.type === 'blanks' ? q.prompt.replace(/\{[^{}]*\}/g, '_____') : q.prompt })),
                   h('span', { class: 'q-points', text: `${m.points ?? '–'} / ${m.max}` }),
                 ),
                 h('p', {}, h('span', { class: 'muted', text: 'Your answer: ' }), h('span', { class: 'pre', text: answerText(q, r.answers[q.id]) })),
                 recs[q.id] ? recordingPlayer(recs[q.id].id, 'Listen to my answer') : null,
                 !right && q.type === 'mc' ? h('p', { class: 'ok', text: `Correct answer${q.multiple ? 's' : ''}: ${optionText(q, q.correct)}` }) : null,
                 !right && q.type === 'short' && q.accepted?.length ? h('p', { class: 'ok', text: `Correct answer: ${q.accepted[0]}` }) : null,
+                !right && q.type === 'blanks'
+                  ? h('p', { class: 'ok', dir: 'auto', text: `Correct answers: ${parseKeys(q.prompt).map((k, i) => `${i + 1}. ${k[0] || '(teacher marks)'}`).join('   ')}` })
+                  : null,
+                !right && q.type === 'match' ? h('p', { class: 'ok', dir: 'auto', text: `Correct: ${q.pairs.map((p) => `${p.left} → ${p.right}`).join(' · ')}` }) : null,
                 m.comment ? h('p', { class: 'comment', text: `💬 ${m.comment}` }) : null,
               );
             })

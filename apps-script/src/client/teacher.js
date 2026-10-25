@@ -42,7 +42,7 @@ async function testsPage() {
         'div',
         { class: 'row' },
         importInput,
-        h('button', { class: 'btn', onclick: () => App.aiImport() }, '✨ Create from PDF with AI'),
+        h('button', { class: 'btn', onclick: () => App.aiImport() }, '✨ Create from PDF/Word with AI'),
         h('button', { class: 'btn', onclick: () => importInput.click() }, 'Import JSON'),
         h('a', { class: 'btn btn-primary', href: '#edit/new' }, '+ New test'),
       ),
@@ -97,6 +97,7 @@ function blankTest() {
       readAloudForAll: false,
       recordingForAll: false,
       showResults: 'score',
+      voice: { provider: 'browser', name: '' },
     },
     questions: [],
   };
@@ -112,10 +113,41 @@ function newQuestion(type) {
   }
   if (type === 'short') q.accepted = [];
   if (type === 'long') q.modelAnswer = '';
+  if (type === 'blanks') {
+    q.title = 'Complete the sentences.';
+    q.wordBank = [];
+    q.dropdown = false;
+  }
+  if (type === 'match') {
+    q.prompt = 'Match each word to its meaning.';
+    q.pairs = [{ left: '', right: '' }, { left: '', right: '' }];
+    q.extra = [];
+    q.points = 2;
+  }
   return q;
 }
 
-const TYPE_LABEL = { section: 'Text / reading passage', mc: 'Multiple choice', short: 'Short answer (auto-marked)', long: 'Open answer (you mark it)' };
+const TYPE_LABEL = {
+  section: 'Text / reading passage',
+  mc: 'Multiple choice',
+  short: 'Short answer (auto-marked)',
+  blanks: 'Fill in the blanks',
+  match: 'Matching',
+  long: 'Open answer (you mark it)',
+};
+const countBlanks = (text) => (String(text || '').match(/\{[^{}]*\}/g) || []).length;
+
+// Natural voices a teacher can pick from (any other Google voice name works too).
+const GOOGLE_VOICES = [
+  ['en-US-Chirp3-HD-Aoede', 'US English, woman (most natural)'],
+  ['en-US-Chirp3-HD-Charon', 'US English, man (most natural)'],
+  ['en-US-Neural2-F', 'US English, woman'],
+  ['en-US-Neural2-D', 'US English, man'],
+  ['en-GB-Neural2-A', 'British English, woman'],
+  ['en-GB-Neural2-B', 'British English, man'],
+  ['he-IL-Wavenet-A', 'Hebrew, woman'],
+  ['he-IL-Wavenet-B', 'Hebrew, man'],
+];
 
 async function editorPage(id) {
   let status = 'draft';
@@ -154,10 +186,73 @@ async function editorPage(id) {
       drawQuestions();
     };
     const body = h('div', { class: 'form' });
+    const pointsRow = (hint) =>
+      h('div', { class: 'row' }, field('Points', bind(q, 'points', h('input', { type: 'number', min: 0, step: 0.5, value: q.points, class: 'narrow-input' }), Number), hint));
     if (q.type === 'section') {
       body.append(
         field('Heading (optional)', bind(q, 'title', h('input', { value: q.title }))),
         field('Text students read (instructions, a story, a passage…)', bind(q, 'prompt', h('textarea', { rows: 5, value: q.prompt }))),
+      );
+    } else if (q.type === 'blanks') {
+      const count = h('small', { class: 'muted' });
+      const text = h('textarea', { rows: 5, value: q.prompt, dir: 'auto', placeholder: 'She opened a small {business} selling jewelry online.\nIt is fun {to play|playing} video games.' });
+      const showCount = () => {
+        const n = countBlanks(text.value);
+        count.textContent = n ? `${n} blank${n === 1 ? '' : 's'} · each is worth an equal share of the points` : 'No blanks yet: put each answer in {curly braces}.';
+      };
+      text.addEventListener('input', () => ((q.prompt = text.value), touch(), showCount()));
+      showCount();
+      const bank = h('textarea', { rows: 2, value: (q.wordBank || []).join('\n'), dir: 'auto', placeholder: 'business\norganization\ngrowing concern' });
+      bank.addEventListener('input', () => {
+        q.wordBank = bank.value.split(/\n|,/).map((x) => x.trim()).filter(Boolean);
+        touch();
+      });
+      body.append(
+        field('Instruction', bind(q, 'title', h('input', { value: q.title, dir: 'auto' }))),
+        h(
+          'label',
+          {},
+          h('span', { text: 'Text with the answers in {curly braces}' }),
+          text,
+          h('small', { class: 'muted', text: 'Each {…} becomes a blank. Several right answers: {to play|playing}. Empty {} = a blank you mark yourself. One sentence per line.' }),
+          count,
+        ),
+        field('Word bank (optional, one per line)', bank, 'Shown above the sentences. Words are crossed out as students use them.'),
+        h('label', { class: 'check' }, bind(q, 'dropdown', h('input', { type: 'checkbox', checked: !!q.dropdown })), 'Students choose from the word bank in a drop-down instead of typing'),
+        pointsRow(),
+      );
+    } else if (q.type === 'match') {
+      const rows = h('div', { class: 'match-editor' });
+      const drawPairs = () =>
+        clear(
+          rows,
+          h('div', { class: 'row tight small muted' }, h('span', { class: 'grow', text: 'Item' }), h('span', { class: 'grow', text: 'Its match' })),
+          q.pairs.map((p, i) =>
+            h(
+              'div',
+              { class: 'row tight' },
+              h('span', { class: 'letter', text: i + 1 }),
+              bind(p, 'left', h('input', { value: p.left, class: 'grow', dir: 'auto', placeholder: 'Unique' })),
+              '→',
+              bind(p, 'right', h('input', { value: p.right, class: 'grow', dir: 'auto', placeholder: 'special' })),
+              q.pairs.length > 2
+                ? h('button', { class: 'btn btn-ghost', type: 'button', 'aria-label': 'Remove pair', onclick: () => (q.pairs.splice(i, 1), touch(), drawPairs()) }, '✕')
+                : null,
+            ),
+          ),
+          q.pairs.length < 40 ? h('button', { class: 'btn btn-ghost', type: 'button', onclick: () => (q.pairs.push({ left: '', right: '' }), touch(), drawPairs()) }, '+ Pair') : null,
+        );
+      drawPairs();
+      const extra = h('textarea', { rows: 2, value: (q.extra || []).join('\n'), dir: 'auto', placeholder: 'to sing' });
+      extra.addEventListener('input', () => {
+        q.extra = extra.value.split('\n').map((x) => x.trim()).filter(Boolean);
+        touch();
+      });
+      body.append(
+        field('Instruction', bind(q, 'prompt', h('textarea', { rows: 2, value: q.prompt, dir: 'auto' }))),
+        h('div', {}, h('span', { class: 'small muted', text: 'Pairs: students see the matches mixed up and choose one for each item.' }), rows),
+        field('Extra wrong choices (optional, one per line)', extra),
+        pointsRow('Each pair is worth an equal share.'),
       );
     } else {
       body.append(
@@ -292,11 +387,126 @@ async function editorPage(id) {
         'div',
         { class: 'card add-row' },
         h('span', { class: 'muted', text: 'Add:' }),
-        ['mc', 'short', 'long', 'section'].map((t) =>
+        ['mc', 'short', 'blanks', 'match', 'long', 'section'].map((t) =>
           h('button', { class: 'btn', type: 'button', onclick: () => (data.questions.push(newQuestion(t)), touch(), drawQuestions()) }, `+ ${TYPE_LABEL[t]}`),
         ),
       ),
     );
+  }
+
+  // Read-aloud voice for this test: the device's own voice (free, no setup),
+  // or a natural voice whose audio is prepared once and saved in Drive.
+  function voicePanel() {
+    s.voice ||= { provider: 'browser', name: '' };
+    const v = s.voice;
+    const box = h('div', { class: 'form' });
+    const status = h('p', { class: 'small' });
+    const player = h('div');
+    const nameList = h('datalist', { id: 'google-voices' }, GOOGLE_VOICES.map(([n, l]) => h('option', { value: n }, l)));
+
+    async function refreshStatus() {
+      if (v.provider === 'browser') return clear(status);
+      if (id === 'new' || dirty) return clear(status, 'Save the test, then press Prepare audio.');
+      try {
+        const st = await api('GET', `/api/tests/${id}/audio`);
+        status.textContent = st.missing
+          ? `${st.ready} of ${st.total} pieces have audio. Until all are ready, the rest is read by the device voice.`
+          : `All ${st.total} pieces have natural-voice audio. ✓`;
+      } catch (e) {
+        status.textContent = e.message;
+      }
+    }
+
+    async function prepare(btn) {
+      if ((id === 'new' || dirty) && !(await saveTest())) return;
+      btn.disabled = true;
+      try {
+        for (;;) {
+          status.textContent = 'Making audio… keep this page open.';
+          const st = await api('POST', `/api/tests/${id}/audio`);
+          status.textContent = `Making audio… ${st.ready} of ${st.total} ready.`;
+          if (!st.missing) break;
+        }
+        await refreshStatus();
+        toast('Audio ready.', 'ok');
+      } catch (e) {
+        status.textContent = e.message;
+        toast(e.message, 'error');
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    async function tryVoice(btn) {
+      btn.disabled = true;
+      clear(player, h('span', { class: 'small muted', text: 'Making a sample…' }));
+      try {
+        const first = data.questions.find((q) => q.type !== 'section' && q.prompt);
+        const text = first ? first.prompt.replace(/\{[^{}]*\}/g, '…').slice(0, 250) : '';
+        const a = await api('POST', '/api/voices/try', { provider: v.provider, name: v.name, language: data.language, text });
+        const audio = h('audio', { controls: true, autoplay: true, src: `data:${a.mime};base64,${a.data}` });
+        clear(player, audio);
+      } catch (e) {
+        clear(player, h('p', { class: 'error small', text: e.message }));
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    const draw = () => {
+      const help = {
+        browser: 'Free and needs no setup. Each Chromebook or computer uses its own built-in voice, so it may sound robotic.',
+        google: 'Natural Google voices. Needs a Google Cloud key under Students → Settings. Audio is made once per test and saved in your Drive.',
+        chatterbox: 'Your own Chatterbox voice server. Needs its address under Students → Settings, and the server must be running while you press Prepare audio (not during the test).',
+      }[v.provider];
+      clear(
+        box,
+        h(
+          'div',
+          { class: 'grid-3' },
+          field(
+            'Voice',
+            h(
+              'select',
+              {
+                onchange: (e) => {
+                  v.provider = e.target.value;
+                  touch();
+                  draw();
+                },
+              },
+              [
+                ['browser', 'Device voice (free, no setup)'],
+                ['google', 'Google natural voice'],
+                ['chatterbox', 'Chatterbox (your own server)'],
+              ].map(([val, l]) => h('option', { value: val, selected: v.provider === val }, l)),
+            ),
+          ),
+          v.provider === 'browser'
+            ? null
+            : field(
+                v.provider === 'google' ? 'Voice name' : 'Voice name (optional)',
+                bind(v, 'name', h('input', { value: v.name, list: v.provider === 'google' ? 'google-voices' : null, placeholder: v.provider === 'google' ? 'en-US-Chirp3-HD-Aoede' : 'as set up on your server' })),
+                v.provider === 'google' ? 'Pick from the list or type any Google voice name.' : null,
+              ),
+        ),
+        h('p', { class: 'small muted', text: help }),
+        v.provider === 'browser'
+          ? null
+          : h(
+              'div',
+              { class: 'row' },
+              h('button', { class: 'btn', type: 'button', onclick: (e) => tryVoice(e.currentTarget) }, '▶ Try voice'),
+              h('button', { class: 'btn btn-primary', type: 'button', onclick: (e) => prepare(e.currentTarget) }, '🔊 Prepare audio'),
+            ),
+        player,
+        status,
+        nameList,
+      );
+      refreshStatus();
+    };
+    draw();
+    return h('details', { class: 'card form', open: v.provider !== 'browser' }, h('summary', { class: 'strong', text: 'Read-aloud voice' }), box);
   }
 
   const statusSel = h(
@@ -425,6 +635,7 @@ async function editorPage(id) {
         ),
       ),
     ),
+    voicePanel(),
     h('h2', { text: 'Questions' }),
     qList,
     h(
@@ -599,6 +810,8 @@ async function gradePage(attemptId) {
 
   const answerView = (q) => {
     const a = attempt.answers[q.id];
+    if (q.type === 'blanks') return blanksReview(q, a);
+    if (q.type === 'match') return matchReview(q, a);
     if (q.type === 'mc') {
       const chosen = asList(a);
       const right = asList(q.correct);
@@ -641,7 +854,12 @@ async function gradePage(attemptId) {
         'div',
         { class: 'q-head' },
         h('span', { class: 'q-num', text: ++n }),
-        h('div', { class: 'q-text' }, q.title ? h('strong', { text: q.title }) : null, h('div', { class: 'prompt', text: q.prompt })),
+        h(
+          'div',
+          { class: 'q-text' },
+          q.title ? h('strong', { dir: 'auto', text: q.title }) : null,
+          h('div', { class: 'prompt', dir: 'auto', text: q.type === 'blanks' ? q.prompt.replace(/\{[^{}]*\}/g, '_____') : q.prompt }),
+        ),
         needs ? h('span', { class: 'badge badge-warn', text: 'Check' }) : null,
       ),
       answerView(q),
@@ -718,6 +936,53 @@ async function gradePage(attemptId) {
       : h('p', { class: 'muted', text: 'The student is still working. You can grade after they submit.' }),
   );
   updateTotal();
+}
+
+// Fill in the blanks for marking: each blank with the student's answer and
+// the accepted ones.
+function blanksReview(q, a) {
+  const keys = [];
+  q.prompt.replace(/\{([^{}]*)\}/g, (_, inner) => keys.push(inner.split('|').map((x) => x.trim()).filter(Boolean)));
+  const given = Array.isArray(a) ? a : [];
+  const norm = (x) => String(x || '').trim().toLowerCase().replace(/[‘’]/g, "'").replace(/[.!]+$/, '');
+  return h(
+    'table',
+    { class: 'table compact' },
+    h('thead', {}, h('tr', {}, h('th', { text: '#' }), h('th', { text: 'Student wrote' }), h('th', { text: 'Accepted' }), h('th', {}))),
+    h(
+      'tbody',
+      {},
+      keys.map((acc, i) => {
+        const g = given[i] || '';
+        const ok = acc.some((x) => norm(x) === norm(g));
+        return h(
+          'tr',
+          { class: ok ? '' : g.trim() ? 'row-alert' : '' },
+          h('td', { text: i + 1 }),
+          h('td', { dir: 'auto', text: g || '—' }),
+          h('td', { dir: 'auto', class: 'muted', text: acc.join(' · ') || '(you mark it)' }),
+          h('td', { text: ok ? '✓' : g.trim() ? '✗' : '' }),
+        );
+      }),
+    ),
+  );
+}
+
+function matchReview(q, a) {
+  const given = Array.isArray(a) ? a : [];
+  return h(
+    'table',
+    { class: 'table compact' },
+    h('thead', {}, h('tr', {}, h('th', { text: 'Item' }), h('th', { text: 'Student chose' }), h('th', { text: 'Correct' }), h('th', {}))),
+    h(
+      'tbody',
+      {},
+      q.pairs.map((p, i) => {
+        const ok = given[i] === p.right;
+        return h('tr', { class: ok || !given[i] ? '' : 'row-alert' }, h('td', { dir: 'auto', text: p.left }), h('td', { dir: 'auto', text: given[i] || '—' }), h('td', { dir: 'auto', class: 'muted', text: p.right }), h('td', { text: ok ? '✓' : given[i] ? '✗' : '' }));
+      }),
+    ),
+  );
 }
 
 // ==================================================================== people
@@ -905,9 +1170,48 @@ async function peoplePage() {
           },
         }, 'Save'),
       ),
+      voiceSettings(settings.voices || {}),
     ),
   );
   draw();
+}
+
+// Where natural read-aloud voices come from. Keys are saved on the server and
+// never shown again; leave a key box empty to keep the saved one.
+function voiceSettings(v) {
+  const googleKey = h('input', { type: 'password', class: 'grow', autocomplete: 'off', placeholder: v.googleKeySet ? 'Saved ✓ (type a new key to replace it)' : 'Paste your Google Cloud API key' });
+  const cbUrl = h('input', { class: 'grow', value: v.chatterboxUrl || '', placeholder: 'https://your-tunnel.trycloudflare.com' });
+  const cbKey = h('input', { type: 'password', class: 'grow', autocomplete: 'off', placeholder: v.chatterboxKeySet ? 'Saved ✓' : 'Only if your server needs one' });
+  const save = async (extra) => {
+    try {
+      const body = Object.assign({ chatterboxUrl: cbUrl.value }, extra);
+      if (googleKey.value.trim()) body.googleKey = googleKey.value.trim();
+      if (cbKey.value.trim()) body.chatterboxKey = cbKey.value.trim();
+      const r = await api('PUT', '/api/settings/voices', body);
+      googleKey.value = '';
+      cbKey.value = '';
+      googleKey.placeholder = r.voices.googleKeySet ? 'Saved ✓ (type a new key to replace it)' : 'Paste your Google Cloud API key';
+      cbKey.placeholder = r.voices.chatterboxKeySet ? 'Saved ✓' : 'Only if your server needs one';
+      toast('Saved.', 'ok');
+    } catch (e) {
+      toast(e.message, 'error');
+    }
+  };
+  return h(
+    'div',
+    { class: 'form voice-settings' },
+    h('h3', { text: 'Read-aloud voices' }),
+    h('p', { class: 'small muted', text: 'Optional. Each test can use the free device voice, or a natural voice from one of these. Choose the voice in each test under "Read-aloud voice". The README explains how to get a key or set up Chatterbox.' }),
+    h('label', {}, 'Google Cloud Text-to-Speech key', googleKey),
+    h('label', {}, 'Chatterbox server address', cbUrl),
+    h('label', {}, 'Chatterbox key', cbKey),
+    h(
+      'div',
+      { class: 'row end' },
+      v.googleKeySet ? h('button', { class: 'btn btn-ghost danger', type: 'button', onclick: () => save({ googleKey: '' }) }, 'Remove Google key') : null,
+      h('button', { class: 'btn', type: 'button', onclick: () => save({}) }, 'Save voices'),
+    ),
+  );
 }
 
 // ============================================================ student view
