@@ -55,6 +55,7 @@ http
   .createServer((req, res) => {
     const url = new URL(req.url, 'http://x');
     if (req.method === 'POST' && url.pathname === '/rpc') {
+      if (process.env.HANG) return; // imitate Google never answering
       let body = '';
       req.on('data', (c) => (body += c));
       req.on('end', () => {

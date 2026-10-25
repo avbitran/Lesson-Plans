@@ -10,6 +10,26 @@
   <script type="application/json" id="boot"><?!= boot ?></script>
   <div id="app"><p class="loading">Loading…</p></div>
   <script>
+    // Its own script block, so it still runs if the app's code fails to load
+    // at all: show the problem instead of "Loading…" forever.
+    (function () {
+      var multi = 'If you are signed in to more than one Google account in this browser, open the app in an Incognito window (Ctrl+Shift+N) or a Chrome profile with only your school account.';
+      function showFatal(message) {
+        var app = document.getElementById('app');
+        if (!app || !app.querySelector('.loading')) return;
+        app.innerHTML = '<div class="card narrow" style="margin:2rem auto"><h2>The app could not start</h2><p class="error"></p><p class="muted">Please send a screenshot of this message to whoever set up the app.</p></div>';
+        app.querySelector('.error').textContent = message;
+      }
+      window.addEventListener('error', function (e) {
+        showFatal(e.message + (e.lineno ? ' (line ' + e.lineno + ')' : ''));
+      });
+      window.addEventListener('unhandledrejection', function (e) {
+        showFatal(String((e.reason && e.reason.message) || e.reason));
+      });
+      setTimeout(function () { showFatal('Still loading after a minute. ' + multi); }, 60000);
+    })();
+  </script>
+  <script>
 /*SCRIPTS*/
   </script>
 </body>

@@ -12,10 +12,21 @@ class ApiError extends Error {
 
 // All server calls go through one Apps Script function, rpc(), with
 // REST-style paths so the pages read like ordinary web code.
+const MULTI_ACCOUNT_HELP =
+  'If you are signed in to more than one Google account in this browser, Google often fails to answer. ' +
+  'Open the app in an Incognito window (Ctrl+Shift+N) or a Chrome profile with only your school account.';
+
 function api(method, url, body) {
   return new Promise((resolve, reject) => {
+    // Google sometimes never answers at all (most often with several
+    // accounts signed in), so don't wait forever.
+    const timer = setTimeout(() => reject(new ApiError(0, `No answer from Google after 45 seconds. ${MULTI_ACCOUNT_HELP}`)), 45000);
+    const done = (fn) => (x) => {
+      clearTimeout(timer);
+      fn(x);
+    };
     google.script.run
-      .withSuccessHandler((text) => {
+      .withSuccessHandler(done((text) => {
         let r;
         try {
           r = JSON.parse(text);
@@ -24,8 +35,8 @@ function api(method, url, body) {
         }
         if (r.ok) resolve(r.data);
         else reject(new ApiError(r.status, r.error));
-      })
-      .withFailureHandler((e) => reject(new ApiError(0, `Connection problem: ${(e && e.message) || e}`)))
+      }))
+      .withFailureHandler(done((e) => reject(new ApiError(0, `Problem reaching Google: ${(e && e.message) || e}. ${MULTI_ACCOUNT_HELP}`))))
       .rpc(method, url, body === undefined ? null : body);
   });
 }
