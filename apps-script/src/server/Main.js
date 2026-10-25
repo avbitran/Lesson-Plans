@@ -7,7 +7,9 @@
 const DEFAULT_RECORDER_URL = 'https://avbitran.github.io/Lesson-Plans/apps-script/recorder.html';
 
 function doGet() {
-  const t = HtmlService.createTemplateFromFile('Index');
+  // INDEX_HTML (the pages) is appended to Code.gs by build.js, so the whole
+  // app is a single file to paste.
+  const t = HtmlService.createTemplate(INDEX_HTML);
   // Escaped so a name like "</script>" can't break out of the page's script.
   t.boot = JSON.stringify(bootInfo()).replace(/</g, '\\u003c');
   return t

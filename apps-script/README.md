@@ -22,9 +22,8 @@ Do all of this while signed in to your **school** Google account.
 
 1. Go to **[sheets.new](https://sheets.new)** to make a new Google Sheet. Name it something like *Online Tests*.
 2. In the Sheet, open **Extensions → Apps Script**. A code editor opens with a file called `Code.gs`.
-3. Open [`dist/Code.gs`](dist/Code.gs) here on GitHub, click **Raw**, select everything (Ctrl+A), copy, and paste it into the editor, **replacing** what was there.
-4. In the editor, click **+** next to *Files* → **HTML**, name it exactly **`Index`**. Delete its contents and paste in everything from [`dist/Index.html`](dist/Index.html) (again, via **Raw**).
-5. Click 💾 **Save**.
+3. Open [this link to the app's code](https://raw.githubusercontent.com/avbitran/Lesson-Plans/claude/online-student-testing-system-cv0t2z/apps-script/dist/Code.gs). It's one long page of text. Select everything (Ctrl+A), copy (Ctrl+C), go back to the editor, select everything there (Ctrl+A), and paste (Ctrl+V), **replacing** what was there.
+4. Click 💾 **Save**. That's the whole app: one file.
 
 ### 2. Publish it to your school
 
@@ -71,7 +70,7 @@ For a complete lockdown on managed Chromebooks, ask your school's Google admin t
 
 ## Updating the app later
 
-Paste the new `Code.gs` and `Index.html`, save, then **Deploy → Manage deployments → ✏️ Edit → Version: New version → Deploy**. The link stays the same.
+Paste the new `Code.gs`, save, then **Deploy → Manage deployments → ✏️ Edit → Version: New version → Deploy**. The link stays the same.
 
 ## Good to know
 
@@ -86,14 +85,14 @@ Paste the new `Code.gs` and `Index.html`, save, then **Deploy → Manage deploym
 
 ## For developers
 
-The two files in `dist/` are generated. Edit `src/` and run:
+`dist/Code.gs` (the whole app, pages included) is generated. Edit `src/` and run:
 
 ```bash
-npm run build   # writes dist/Code.gs and dist/Index.html
+npm run build   # writes dist/Code.gs (and dist/Index.html for the harness)
 npm test        # server logic against an in-memory Sheet/Drive
 node test/harness.js   # the real pages with a fake google.script.run: http://localhost:3500/?as=teacher
 ```
 
 - `src/server/`: `Core.js` (test validation, auto-marking), `Api.js` (all routes; storage passed in), `Store.js` (Sheets tables, JSON split across cells), `Main.js` (`doGet`, `rpc`, identity, Drive).
-- `src/client/`: the pages (plain JavaScript, hash routing), inlined into `Index.html`.
+- `src/client/`: the pages (plain JavaScript, hash routing), inlined into `Index.html` and embedded in `Code.gs` as `INDEX_HTML`.
 - `recorder.html`: the pop-up recorder for GitHub Pages. It only talks to `*.googleusercontent.com` pages.
