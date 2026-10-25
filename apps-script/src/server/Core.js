@@ -39,7 +39,18 @@ function normalizeTest(input) {
       const options = (Array.isArray(q.options) ? q.options : []).map((o) => str(o, 1000)).filter((o) => o.trim());
       if (options.length < 2) throw new ValidationError(`Question ${i + 1} needs at least two options.`);
       out.options = options.slice(0, 12);
-      out.correct = int(q.correct, 0, out.options.length - 1, 0);
+      if (q.multiple) {
+        // "Choose the TWO correct answers": several options are right.
+        const picks = (Array.isArray(q.correct) ? q.correct : [q.correct])
+          .map((c) => parseInt(c, 10))
+          .filter((c) => Number.isInteger(c) && c >= 0 && c < out.options.length);
+        out.multiple = true;
+        out.correct = [...new Set(picks)].sort((a, b) => a - b);
+        if (!out.correct.length) throw new ValidationError(`Question ${i + 1}: mark at least one correct answer.`);
+        out.scoring = q.scoring === 'all' ? 'all' : 'partial';
+      } else {
+        out.correct = int(Array.isArray(q.correct) ? q.correct[0] : q.correct, 0, out.options.length - 1, 0);
+      }
     }
     if (type === 'short') {
       out.accepted = (Array.isArray(q.accepted) ? q.accepted : [])
@@ -78,7 +89,10 @@ function normalizeTest(input) {
 function studentView(test) {
   return {
     ...test,
-    questions: test.questions.map(({ correct, accepted, modelAnswer, ...rest }) => rest),
+    // Students are told how many answers to choose, not which.
+    questions: test.questions.map(({ correct, accepted, modelAnswer, scoring, ...rest }) =>
+      rest.multiple ? { ...rest, choose: correct.length } : rest,
+    ),
   };
 }
 
@@ -112,10 +126,13 @@ function autoGrade(test, answers, recordedQuestionIds) {
     if (q.type === 'section') continue;
     const a = answers[q.id];
     const recorded = recordedQuestionIds.has(q.id);
-    const empty = a === undefined || a === null || (typeof a === 'string' && !a.trim());
+    const empty = a === undefined || a === null || (typeof a === 'string' && !a.trim()) || (Array.isArray(a) && !a.length);
     let auto = null;
     let review = true;
-    if (q.type === 'mc' && Number.isInteger(a)) {
+    if (q.type === 'mc' && q.multiple && Array.isArray(a) && a.length) {
+      auto = scoreMultiple(q, a);
+      review = recorded;
+    } else if (q.type === 'mc' && !q.multiple && Number.isInteger(a)) {
       auto = a === q.correct ? q.points : 0;
       review = recorded;
     } else if (q.type === 'short' && !empty) {
@@ -129,6 +146,17 @@ function autoGrade(test, answers, recordedQuestionIds) {
     result[q.id] = { auto, review, max: q.points };
   }
   return result;
+}
+
+// Partial: an equal share of the points for each correct option chosen
+// (choosing more options than allowed scores nothing). All: everything right
+// or zero.
+function scoreMultiple(q, picks) {
+  const chosen = [...new Set(picks)];
+  if (chosen.length > q.correct.length) return 0;
+  const hits = chosen.filter((c) => q.correct.includes(c)).length;
+  if (q.scoring === 'all') return hits === q.correct.length ? q.points : 0;
+  return Math.round((q.points * hits * 100) / q.correct.length) / 100;
 }
 
 // Teacher marks win; otherwise the automatic mark; otherwise nothing yet.

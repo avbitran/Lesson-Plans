@@ -74,6 +74,9 @@ function fmtDuration(sec) {
 }
 const isRtl = (lang) => ['he', 'ar'].includes(String(lang || '').slice(0, 2));
 const LETTERS = 'ABCDEFGHIJKL';
+// Multiple choice may have one correct option (a number) or several (an array).
+const asList = (v) => (Array.isArray(v) ? v : v === undefined || v === null || v === '' ? [] : [v]);
+const optionText = (q, list) => asList(list).map((i) => `${LETTERS[i]}. ${q.options[i]}`).join(' · ');
 
 function header(links = []) {
   const user = BOOT.user;

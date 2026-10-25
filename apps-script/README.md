@@ -6,6 +6,8 @@ A free online test system that runs entirely in your school Google account.
 - **Read-aloud.** A 🔊 Listen button on every question, the instructions and reading passages, with a speed control.
 - **Voice answers.** Students can record a spoken answer to any question with 🎤. You listen to it while grading.
 - **Per-student accommodations.** Read-aloud, voice answers, and extra time (+25% to +100%), set by you for each student, or read-aloud/voice answers for a whole test.
+- **Bagrut-style questions.** Multiple choice with one correct answer or several ("Choose the TWO correct answers", marked per answer or all-or-nothing), short answers marked automatically, open answers, and reading passages.
+- **Create a test from a PDF with AI.** Give any AI chat (Claude, Gemini, ChatGPT) the PDF and the app's ready-made instructions, paste the reply back, and check the draft.
 - **Submit and grade.** Answers save automatically. Multiple choice and short answers are marked for you, and anything uncertain is flagged "Check". You mark the rest, add comments, and return the test.
 - **Exam mode.** Every time a student leaves the test (another tab, window or app) it's recorded with the time. After a number of warnings you choose, the test **pauses until you unlock it** or **submits itself**. Copy/paste is blocked.
 - **Live view** of who's working, their progress, time left and how often they left the test.
@@ -53,6 +55,21 @@ That address is already the app's default. If you host the recorder somewhere el
 4. Give students the web app link (for example in Google Classroom). They see the test, press **Start**, and you watch from **Tests → (the test)**.
 
 ---
+
+## The link for students
+
+Send students the **Web app URL**, the same link you open yourself. It ends in `/exec`. To find it again: in the Apps Script editor, **Deploy → Manage deployments**, then copy the **Web app** URL. Don't send the editor's address or a link ending in `/dev`.
+
+Students only get in if their school email is on the **Students** page. Anyone else sees "not on the class list".
+
+## Creating a test from a PDF
+
+**Tests → ✨ Create from PDF with AI** walks you through it:
+1. Copy the instructions the app shows.
+2. Open an AI chat (Claude, Gemini or ChatGPT), attach the PDF, paste the instructions, and send.
+3. Paste the AI's whole reply back into the app. It becomes a **draft**.
+
+AI gets things wrong, especially answer keys for exams without one, so check every question, option and correct answer before opening the test. Open answers the AI wasn't sure about start with "CHECK:" in the model answer. Pictures and tables become short descriptions in [brackets].
 
 ## What to try before a real test
 

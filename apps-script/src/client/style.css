@@ -210,6 +210,8 @@ textarea { width: 100%; resize: vertical; }
 .option:hover { border-color: var(--accent); }
 .option:has(input:checked) { border-color: var(--accent); background: var(--accent-soft); }
 .option input { width: 1.2em; height: 1.2em; accent-color: var(--accent); }
+.option:has(input:disabled) { opacity: .55; cursor: default; }
+.choose-hint { margin: .6em 0 0; font-weight: 600; color: var(--accent); }
 
 .answer { width: 100%; margin-top: .8em; font-size: 1em; }
 .or { color: var(--muted); font-size: .85em; margin-top: .7em; }
@@ -268,3 +270,7 @@ textarea { width: 100%; resize: vertical; }
   body.printing-creds .credentials { max-height: none; overflow: visible; grid-template-columns: repeat(2, 1fr); }
   .cred { break-inside: avoid; color: #000; }
 }
+
+.ai-step h3 { display: flex; align-items: center; gap: .5rem; margin: .2rem 0 .5rem; font-size: 1.05rem; }
+.mono-small { font: .82rem/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.modal { max-height: calc(100vh - 32px); }

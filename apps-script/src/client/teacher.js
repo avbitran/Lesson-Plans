@@ -42,6 +42,7 @@ async function testsPage() {
         'div',
         { class: 'row' },
         importInput,
+        h('button', { class: 'btn', onclick: () => App.aiImport() }, '✨ Create from PDF with AI'),
         h('button', { class: 'btn', onclick: () => importInput.click() }, 'Import JSON'),
         h('a', { class: 'btn btn-primary', href: '#edit/new' }, '+ New test'),
       ),
@@ -166,21 +167,47 @@ async function editorPage(id) {
     }
     if (q.type === 'mc') {
       const opts = h('div', { class: 'mc-options' });
+      const multi = h('input', { type: 'checkbox', checked: !!q.multiple });
+      multi.addEventListener('change', () => {
+        q.multiple = multi.checked;
+        q.correct = q.multiple ? asList(q.correct) : asList(q.correct)[0] ?? 0;
+        if (q.multiple && !q.scoring) q.scoring = 'partial';
+        touch();
+        drawOpts();
+      });
+      const isCorrect = (i) => asList(q.correct).includes(i);
+      const toggleCorrect = (i, on) => {
+        const set = new Set(asList(q.correct));
+        on ? set.add(i) : set.delete(i);
+        q.correct = [...set].sort((a, b) => a - b);
+        touch();
+      };
       const drawOpts = () => {
         clear(
           opts,
-          h('span', { class: 'small muted', text: 'Options — select the correct one' }),
+          h('label', { class: 'check' }, multi, 'More than one correct answer (e.g. "Choose the TWO correct answers")'),
+          q.multiple
+            ? h(
+                'label',
+                { class: 'row tight' },
+                'Marking:',
+                bind(q, 'scoring', h('select', {}, [['partial', 'Points for each correct answer chosen'], ['all', 'All correct, or no points']].map(([v, l]) => h('option', { value: v, selected: (q.scoring || 'partial') === v }, l)))),
+              )
+            : null,
+          h('span', { class: 'small muted', text: q.multiple ? 'Options — tick every correct one. Students are told how many to choose.' : 'Options — select the correct one' }),
           q.options.map((o, i) =>
             h(
               'div',
               { class: 'row tight' },
-              h('input', {
-                type: 'radio',
-                name: `correct-${q.id}`,
-                checked: q.correct === i,
-                'aria-label': `Option ${LETTERS[i]} is correct`,
-                onchange: () => ((q.correct = i), touch()),
-              }),
+              q.multiple
+                ? h('input', { type: 'checkbox', checked: isCorrect(i), 'aria-label': `Option ${LETTERS[i]} is correct`, onchange: (e) => toggleCorrect(i, e.target.checked) })
+                : h('input', {
+                    type: 'radio',
+                    name: `correct-${q.id}`,
+                    checked: q.correct === i,
+                    'aria-label': `Option ${LETTERS[i]} is correct`,
+                    onchange: () => ((q.correct = i), touch()),
+                  }),
               h('span', { class: 'letter', text: LETTERS[i] }),
               bind(q.options, i, h('input', { value: o, class: 'grow', placeholder: `Option ${LETTERS[i]}` })),
               q.options.length > 2
@@ -190,7 +217,8 @@ async function editorPage(id) {
                     'aria-label': 'Remove option',
                     onclick: () => {
                       q.options.splice(i, 1);
-                      if (q.correct >= q.options.length) q.correct = 0;
+                      if (q.multiple) q.correct = asList(q.correct).filter((c) => c !== i).map((c) => (c > i ? c - 1 : c));
+                      else if (q.correct >= q.options.length) q.correct = 0;
                       else if (q.correct > i) q.correct--;
                       touch();
                       drawOpts();
@@ -571,11 +599,21 @@ async function gradePage(attemptId) {
   const answerView = (q) => {
     const a = attempt.answers[q.id];
     if (q.type === 'mc') {
+      const chosen = asList(a);
+      const right = asList(q.correct);
       return h(
         'ol',
         { class: 'mc-review' },
+        q.multiple ? h('li', { class: 'muted small', text: `Choose ${right.length} · ${q.scoring === 'all' ? 'all or nothing' : 'points for each correct answer'}` }) : null,
         q.options.map((o, i) =>
-          h('li', { class: [i === q.correct ? 'correct' : '', i === a ? 'chosen' : ''].join(' ') }, h('span', { class: 'letter', text: LETTERS[i] }), o, i === a ? ' ← chosen' : '', i === q.correct ? ' ✓' : ''),
+          h(
+            'li',
+            { class: [right.includes(i) ? 'correct' : '', chosen.includes(i) ? 'chosen' : ''].join(' ') },
+            h('span', { class: 'letter', text: LETTERS[i] }),
+            o,
+            chosen.includes(i) ? ' ← chosen' : '',
+            right.includes(i) ? ' ✓' : '',
+          ),
         ),
       );
     }

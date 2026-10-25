@@ -12,7 +12,7 @@ const banner = (what) =>
 
 const server = ['Core.js', 'Api.js', 'Store.js', 'Main.js'].map((f) => `// ===== ${f} =====\n${src('server', f).trim()}\n`).join('\n');
 
-const scripts = ['common.js', 'speech.js', 'take.js', 'student.js', 'teacher.js', 'app.js'].map((f) => `// ===== ${f} =====\n${src('client', f).trim()}\n`).join('\n');
+const scripts = ['common.js', 'speech.js', 'take.js', 'student.js', 'ai-import.js', 'teacher.js', 'app.js'].map((f) => `// ===== ${f} =====\n${src('client', f).trim()}\n`).join('\n');
 if (/<\?|\?>|<\/script/i.test(scripts + src('client', 'style.css'))) {
   throw new Error('Client code contains "<?", "?>" or "</script", which would break the Apps Script template.');
 }

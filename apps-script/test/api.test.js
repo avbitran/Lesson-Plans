@@ -190,3 +190,37 @@ test('JSON fields are split across columns and survive the round trip', () => {
   assert.equal(s.width, 6);
   assert.deepEqual(s.fields.map((f) => [f.name, f.col, f.width]), [['id', 1, 1], ['n', 2, 1], ['big', 3, 3], ['b', 6, 1]]);
 });
+
+test('multiple correct answers: partial and all-or-nothing marking', () => {
+  const { teacher, asStudent, call } = setup();
+  call(teacher, 'POST', '/api/students/bulk', { people: [{ email: 's@school.org', name: 'S' }] });
+  const data = {
+    title: 'Two answers',
+    questions: [
+      { id: 'p', type: 'mc', multiple: true, prompt: 'Choose TWO', options: ['a', 'b', 'c', 'd'], correct: [3, 1, 1], points: 4 },
+      { id: 'q', type: 'mc', multiple: true, scoring: 'all', prompt: 'Choose TWO', options: ['a', 'b', 'c', 'd'], correct: [0, 2], points: 4 },
+      { id: 'r', type: 'mc', multiple: true, prompt: 'Choose TWO', options: ['a', 'b', 'c'], correct: [0, 1], points: 3 },
+    ],
+  };
+  const created = call(teacher, 'POST', '/api/tests', { data });
+  const id = created.body.id;
+  const saved = call(teacher, 'GET', `/api/tests/${id}`).body.data.questions[0];
+  assert.deepEqual(saved.correct, [1, 3], 'deduplicated and sorted');
+  assert.equal(saved.scoring, 'partial');
+  call(teacher, 'PUT', `/api/tests/${id}`, { status: 'open' });
+  const s = asStudent('s@school.org');
+  const start = call(s, 'POST', `/api/my/tests/${id}/start`, { clientId: 'c' }).body;
+  assert.equal(start.test.questions[0].choose, 2, 'students see how many to choose');
+  assert.equal(start.test.questions[0].correct, undefined, 'but not which');
+  const a = start.attempt.id;
+  // p: one right one wrong -> half; q: one right -> 0 (all or nothing); r: three picks for two -> rejected
+  call(s, 'PUT', `/api/my/attempts/${a}/answers`, { clientId: 'c', answers: { p: [1, 0], q: [0], r: [0, 1, 2] } });
+  call(s, 'POST', `/api/my/attempts/${a}/submit`, { clientId: 'c' });
+  const d = call(teacher, 'GET', `/api/attempts/${a}`).body;
+  assert.deepEqual(d.attempt.answers, { p: [1, 0], q: [0] });
+  assert.equal(d.auto.p.auto, 2);
+  assert.equal(d.auto.q.auto, 0);
+  assert.equal(d.auto.r.auto, 0);
+  assert.equal(d.auto.r.review, false);
+  assert.equal(core.autoGrade(data.questions && { questions: [{ ...saved, points: 3, correct: [0, 1, 2] }] }, { p: [0, 1] }, new Set()).p.auto, 2);
+});

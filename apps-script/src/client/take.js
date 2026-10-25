@@ -304,6 +304,7 @@ App.take = function take(testId, { preview = false } = {}) {
 
   function speakText(q) {
     const parts = [q.title, q.prompt];
+    if (q.multiple) parts.push(`Choose ${q.choose} answers.`);
     if (q.type === 'mc') q.options.forEach((o, i) => parts.push(`${LETTERS[i]}. ${o}.`));
     return parts.filter(Boolean).join('. \n');
   }
@@ -425,6 +426,33 @@ App.take = function take(testId, { preview = false } = {}) {
     updateProgress();
   }
 
+  // Checkboxes for "choose the TWO correct answers"; once enough are ticked
+  // the rest are disabled until one is unticked.
+  function multipleChoices(q) {
+    const picked = new Set(Array.isArray(state.answers[q.id]) ? state.answers[q.id] : []);
+    const hint = h('p', { class: 'choose-hint' });
+    const boxes = q.options.map((o, i) => h('input', { type: 'checkbox', value: i, checked: picked.has(i) }));
+    const sync = () => {
+      const full = picked.size >= q.choose;
+      boxes.forEach((b, i) => (b.disabled = full && !picked.has(i)));
+      hint.textContent = `Choose ${q.choose} answers (${picked.size} chosen).`;
+    };
+    boxes.forEach((b, i) =>
+      b.addEventListener('change', () => {
+        b.checked ? picked.add(i) : picked.delete(i);
+        sync();
+        changed(q.id, picked.size ? [...picked].sort((x, y) => x - y) : undefined);
+      }),
+    );
+    sync();
+    return h(
+      'div',
+      {},
+      hint,
+      h('div', { class: 'options', role: 'group' }, q.options.map((o, i) => h('label', { class: 'option' }, boxes[i], h('span', { class: 'letter', text: LETTERS[i] }), h('span', { text: o })))),
+    );
+  }
+
   function questionCard(q, number) {
     const card = h('section', { class: `q q-${q.type}`, id: `q-${q.id}` });
     if (q.type === 'section') {
@@ -445,7 +473,9 @@ App.take = function take(testId, { preview = false } = {}) {
         listenButton(speakText(q), card),
       ),
     );
-    if (q.type === 'mc') {
+    if (q.type === 'mc' && q.multiple) {
+      card.append(multipleChoices(q));
+    } else if (q.type === 'mc') {
       card.append(
         h(
           'div',

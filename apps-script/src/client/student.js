@@ -46,8 +46,8 @@
   }
 
   function answerText(q, a) {
-    if (a === undefined || a === null || a === '') return '—';
-    if (q.type === 'mc') return `${LETTERS[a]}. ${q.options[a]}`;
+    if (a === undefined || a === null || a === '' || (Array.isArray(a) && !a.length)) return '—';
+    if (q.type === 'mc') return optionText(q, a);
     return a;
   }
 
@@ -81,7 +81,7 @@
                 ),
                 h('p', {}, h('span', { class: 'muted', text: 'Your answer: ' }), h('span', { class: 'pre', text: answerText(q, r.answers[q.id]) })),
                 recs[q.id] ? recordingPlayer(recs[q.id].id, 'Listen to my answer') : null,
-                !right && q.type === 'mc' ? h('p', { class: 'ok', text: `Correct answer: ${LETTERS[q.correct]}. ${q.options[q.correct]}` }) : null,
+                !right && q.type === 'mc' ? h('p', { class: 'ok', text: `Correct answer${q.multiple ? 's' : ''}: ${optionText(q, q.correct)}` }) : null,
                 !right && q.type === 'short' && q.accepted?.length ? h('p', { class: 'ok', text: `Correct answer: ${q.accepted[0]}` }) : null,
                 m.comment ? h('p', { class: 'comment', text: `💬 ${m.comment}` }) : null,
               );

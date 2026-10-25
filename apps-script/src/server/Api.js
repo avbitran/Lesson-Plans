@@ -105,8 +105,12 @@ function createApi(env) {
     for (const q of test.questions) {
       if (q.type === 'section' || !(q.id in input)) continue;
       const v = input[q.id];
-      if (q.type === 'mc') {
-        if (Number.isInteger(v) && v >= 0 && v < q.options.length) out[q.id] = v;
+      const validOption = (x) => Number.isInteger(x) && x >= 0 && x < q.options.length;
+      if (q.type === 'mc' && q.multiple) {
+        const picks = Array.isArray(v) ? [...new Set(v.filter(validOption))] : [];
+        if (picks.length && picks.length <= q.correct.length) out[q.id] = picks;
+      } else if (q.type === 'mc') {
+        if (validOption(v)) out[q.id] = v;
       } else if (typeof v === 'string') {
         out[q.id] = v.slice(0, 20000);
       }
