@@ -480,7 +480,10 @@ function createApi(env) {
   const clipId = (voice, lang, text) => env.hash(`${voice.provider}|${voice.name}|${lang}|${text}`).slice(0, 24);
 
   let audioIds = null;
-  const audioReady = (id) => (audioIds ||= new Set(db.all('audio', true).map((x) => x.id))).has(id);
+  const audioReady = (id) => {
+    if (!audioIds) audioIds = new Set(db.all('audio', true).map((x) => x.id));
+    return audioIds.has(id);
+  };
 
   // studentView's audio lookup for one test.
   const audioFor = (test) => {
