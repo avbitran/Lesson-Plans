@@ -12,7 +12,7 @@ class MemoryStore {
   }
   strip(t, o, light) {
     const copy = structuredClone(o);
-    if (light) for (const f of PARSED[t].fields) if (f.type === 'json') delete copy[f.name];
+    if (light) for (const f of PARSED[t]) if (f.type === 'json') delete copy[f.name];
     return copy;
   }
   all(t, light) {
@@ -30,7 +30,7 @@ class MemoryStore {
   update(t, id, fields) {
     const o = this.rows(t).find((x) => x.id === id);
     if (!o) throw Object.assign(new Error('Record not found.'), { status: 404 });
-    for (const k of Object.keys(fields)) if (PARSED[t].fields.some((f) => f.name === k)) o[k] = structuredClone(fields[k]);
+    for (const k of Object.keys(fields)) if (PARSED[t].some((f) => f.name === k)) o[k] = structuredClone(fields[k]);
   }
   remove(t, id) {
     this.tables[t] = this.rows(t).filter((x) => x.id !== id);

@@ -280,3 +280,22 @@ textarea { width: 100%; resize: vertical; }
 .preview-bar strong:first-child { color: var(--warn); }
 .pv-check { display: inline-flex; align-items: center; gap: .35rem; }
 .preview-bar select { padding: .25rem .4rem; }
+
+/* Matching (Module E vocabulary) */
+.match { display: grid; grid-template-columns: minmax(10em, 1fr) 2fr; gap: 1em 2em; margin-top: .8em; align-items: start; }
+.match-items { margin: 0; padding-inline-start: 1.6em; line-height: 1.9; }
+.match-pairs { display: flex; flex-direction: column; gap: .6em; }
+.match-row { display: flex; align-items: center; gap: .7em; }
+.match-select { font-size: 1em; min-width: 4.2em; padding: .3em .4em; border-width: 2px; }
+.match-editor { display: flex; flex-direction: column; gap: .5rem; }
+@media (max-width: 600px) { .match { grid-template-columns: 1fr; } }
+
+/* Classes */
+.class-card > summary { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; font-size: 1.05rem; }
+.class-name { font-weight: 600; font-size: 1.05rem; flex: 1; min-width: 10rem; }
+.join-box { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; background: var(--accent-soft); border-radius: var(--radius); padding: .8rem 1rem; }
+.join-code { font: 700 1.6rem/1.2 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; letter-spacing: .06em; color: var(--accent); }
+.join-code.off { color: var(--muted); text-decoration: line-through; }
+.class-picks { display: flex; flex-wrap: wrap; gap: .4rem 1.2rem; margin-top: .4rem; }
+.join-card { width: min(520px, 100%); }
+.join-card .join-input { font: 700 1.4rem ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; letter-spacing: .08em; text-transform: uppercase; }

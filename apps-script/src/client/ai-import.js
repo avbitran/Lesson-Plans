@@ -23,7 +23,10 @@ ITEM TYPES
    {"type": "mc", "multiple": true, "prompt": "question", "options": ["...", "...", "...", "...", "..."], "correct": [0, 3], "points": 6}
 4. Short answer with a few acceptable answers (a word, a verb form, a number):
    {"type": "short", "prompt": "question", "accepted": ["answer", "another acceptable answer"], "points": 3}
-5. Open answer the teacher marks (sentences, explanations, "complete the sentence" with free wording):
+5. Matching (vocabulary: match items to definitions; extra items are distractors; "answer" is the item's position counted from 0):
+   {"type": "match", "prompt": "the instructions", "items": ["a calendar", "a season", "an island", "traffic", "a prize", "a label"], "pairs": [{"text": "cars, buses, and trucks moving along a road", "answer": 3}, {"text": "shows days, weeks, and months in a year", "answer": 0}], "pointsEach": 2}
+   Leave out the worked example the test shows; include only the definitions students must answer.
+6. Open answer the teacher marks (sentences, explanations, "complete the sentence" with free wording):
    {"type": "long", "prompt": "question", "modelAnswer": "a good answer and what to look for", "points": 8}
 
 RULES

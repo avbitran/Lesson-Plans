@@ -23,18 +23,26 @@ const api = createApi({
   withLock: (fn) => fn(),
   files: { save: (n, m, d) => (drive.set(n, d), n), read: (id) => drive.get(id), remove: (id) => drive.delete(id) },
   exportResults: (title, rows) => `about:blank#${encodeURIComponent(title)}-${rows.length}`,
+  // A pretend Google Classroom with one class.
+  classroom: {
+    courses: () => [{ id: 'gc1', name: 'English 10-3', section: 'Bagrut' }],
+    students: () => [{ email: 'maya@school.org', name: 'Maya Cohen' }, { email: 'omer@school.org', name: 'Omer Levi' }],
+  },
+  makeInstallCopy: () => ({ copyLink: 'https://docs.google.com/spreadsheets/d/EXAMPLE/copy', fileUrl: 'about:blank', sharing: 'anyone' }),
   settings: {
     get: () => ({ recorderUrl: settings.recorderUrl || `http://localhost:${PORT}/recorder.html`, spreadsheetUrl: 'about:blank', recordingsUrl: 'about:blank' }),
     set: (s) => (settings = s),
   },
 });
 
+// Same rules as Main.currentUser_.
 function userFor(email) {
   email = String(email || '').toLowerCase();
-  if (email === 'teacher' || email === OWNER || db.get('teachers', email)) return { id: OWNER, email: OWNER, role: 'teacher', name: 'teacher' };
+  if (email === 'teacher' || email === OWNER) return { id: OWNER, email: OWNER, role: 'teacher', admin: true, name: 'teacher' };
+  if (db.get('teachers', email)) return { id: email, email, role: 'teacher', admin: false, name: email.split('@')[0] };
   const s = db.get('students', email);
-  if (!s) return { role: null, email };
-  return { id: email, email, role: 'student', name: s.name, className: s.className, readAloud: !!s.readAloud, voiceAnswers: !!s.voiceAnswers, extraTimePct: s.extraTimePct || 0 };
+  if (!s) return email ? { id: email, email, role: 'guest' } : { role: null, email: '' };
+  return { id: email, email, role: 'student', name: s.name, readAloud: !!s.readAloud, voiceAnswers: !!s.voiceAnswers, extraTimePct: s.extraTimePct || 0 };
 }
 
 const SHIM = `<script>

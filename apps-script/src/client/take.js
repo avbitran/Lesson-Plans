@@ -330,6 +330,12 @@ App.take = function take(testId, { preview = false, view = {} } = {}) {
   function speakText(q) {
     const parts = [q.title, q.prompt];
     if (q.multiple) parts.push(`Choose ${q.choose} answers.`);
+    if (q.type === 'match') {
+      parts.push('The items are:');
+      q.items.forEach((it, i) => parts.push(`${i + 1}. ${it}.`));
+      parts.push('The definitions are:');
+      q.pairs.forEach((p) => parts.push(`${p.text}.`));
+    }
     if (q.type === 'mc') q.options.forEach((o, i) => parts.push(`${LETTERS[i]}. ${o}.`));
     return parts.filter(Boolean).join('. \n');
   }
@@ -451,6 +457,39 @@ App.take = function take(testId, { preview = false, view = {} } = {}) {
     updateProgress();
   }
 
+  // Matching: the numbered items, then each definition with a dropdown for
+  // the item's number. An item picked for one definition is greyed out in the
+  // others, as on paper each item is used once.
+  function matchBlock(q) {
+    const picks = q.pairs.map((p, k) => (Array.isArray(state.answers[q.id]) && Number.isInteger(state.answers[q.id][k]) ? state.answers[q.id][k] : null));
+    const selects = q.pairs.map((p, k) =>
+      h(
+        'select',
+        { class: 'match-select', 'aria-label': `Item number for: ${p.text}` },
+        h('option', { value: '' }, '—'),
+        q.items.map((it, i) => h('option', { value: i, selected: picks[k] === i }, String(i + 1))),
+      ),
+    );
+    const sync = () =>
+      selects.forEach((sel, k) => {
+        for (const o of sel.options) if (o.value !== '') o.disabled = picks.some((x, j) => j !== k && x === Number(o.value));
+      });
+    selects.forEach((sel, k) =>
+      sel.addEventListener('change', () => {
+        picks[k] = sel.value === '' ? null : Number(sel.value);
+        sync();
+        changed(q.id, picks.some((x) => x !== null) ? picks.slice() : undefined);
+      }),
+    );
+    sync();
+    return h(
+      'div',
+      { class: 'match' },
+      h('ol', { class: 'match-items' }, q.items.map((it) => h('li', { text: it }))),
+      h('div', { class: 'match-pairs' }, q.pairs.map((p, k) => h('label', { class: 'match-row' }, selects[k], h('span', { text: p.text })))),
+    );
+  }
+
   // Checkboxes for "choose the TWO correct answers"; once enough are ticked
   // the rest are disabled until one is unticked.
   function multipleChoices(q) {
@@ -498,7 +537,9 @@ App.take = function take(testId, { preview = false, view = {} } = {}) {
         listenButton(speakText(q), card),
       ),
     );
-    if (q.type === 'mc' && q.multiple) {
+    if (q.type === 'match') {
+      card.append(matchBlock(q));
+    } else if (q.type === 'mc' && q.multiple) {
       card.append(multipleChoices(q));
     } else if (q.type === 'mc') {
       card.append(
@@ -679,7 +720,14 @@ App.take = function take(testId, { preview = false, view = {} } = {}) {
       for (const s of list) who.append(h('option', { value: s.id, selected: s.id === PV.studentId }, `${s.name}${s.className ? ` (${s.className})` : ''}`));
     };
     if (App.studentsCache) fillStudents(App.studentsCache);
-    else api('GET', '/api/users').then((r) => fillStudents((App.studentsCache = r.students))).catch(() => {});
+    else
+      api('GET', '/api/classes')
+        .then((r) => {
+          const seen = new Map();
+          for (const c of r.classes) for (const st of c.students) if (st.status === 'active' && !seen.has(st.id)) seen.set(st.id, Object.assign({}, st, { className: c.name }));
+          fillStudents((App.studentsCache = [...seen.values()].sort((a, b) => a.name.localeCompare(b.name))));
+        })
+        .catch(() => {});
     const toggle = (label, key) => h('label', { class: 'pv-check' }, h('input', { type: 'checkbox', checked: !!PV[key], onchange: (e) => go({ [key]: e.target.checked, studentId: '' }) }), label);
     const extra = h('select', { 'aria-label': 'Extra time', onchange: (e) => go({ extraTimePct: Number(e.target.value), studentId: '' }) }, [0, 25, 33, 50, 100].map((p) => h('option', { value: p, selected: p === (PV.extraTimePct || 0) }, p ? `+${p}% time` : 'No extra time')));
     return h(

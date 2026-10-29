@@ -13,7 +13,7 @@ const sample = require('../samples/past-simple-vs-past-progressive.json');
 
 const { MemoryStore } = require('./memory-store.js');
 
-function setup() {
+function setup({ classroom } = {}) {
   const db = new MemoryStore();
   const drive = new Map();
   let clock = 1_700_000_000_000;
@@ -30,11 +30,16 @@ function setup() {
     },
     exportResults: (title, rows) => `sheet:${title}:${rows.length}`,
     settings: { get: () => ({ recorderUrl: settings.recorderUrl || 'default' }), set: (s) => (settings = s) },
+    classroom,
   });
-  const teacher = { id: 'teacher@school.org', role: 'teacher' };
+  // The person who set up the app is the admin.
+  const teacher = { id: 'teacher@school.org', email: 'teacher@school.org', role: 'teacher', admin: true };
+  const otherTeacher = (email) => ({ id: email, email, role: 'teacher', admin: false });
+  // Mirrors Main.currentUser_: a student record makes you a student.
   const asStudent = (email) => {
     const s = db.get('students', email);
-    return { id: email, role: 'student', name: s.name, className: s.className, readAloud: s.readAloud, voiceAnswers: s.voiceAnswers, extraTimePct: s.extraTimePct };
+    if (!s) return { id: email, email, role: 'guest' };
+    return { id: email, email, role: 'student', name: s.name, readAloud: s.readAloud, voiceAnswers: s.voiceAnswers, extraTimePct: s.extraTimePct };
   };
   const call = (user, method, path, body) => {
     try {
@@ -45,20 +50,26 @@ function setup() {
       return { status: e.status, body: { error: e.message } };
     }
   };
-  return { db, drive, api, teacher, asStudent, call, tick: (ms) => (clock += ms) };
+  const addClass = (user, name, people) => {
+    const id = call(user, 'POST', '/api/classes', { name }).body.id;
+    if (people) call(user, 'POST', `/api/classes/${id}/students`, { people });
+    return id;
+  };
+  return { db, drive, api, teacher, otherTeacher, asStudent, addClass, call, tick: (ms) => (clock += ms) };
 }
 
 test('full flow: roster, test, attempt, warnings, recording, grading, results', () => {
-  const { db, drive, teacher, asStudent, call, tick } = setup();
+  const { db, drive, teacher, asStudent, addClass, call } = setup();
 
-  const added = call(teacher, 'POST', '/api/students/bulk', {
+  const c103 = addClass(teacher, '10-3');
+  const c104 = addClass(teacher, '10-4', [{ email: 'yoni@school.org', name: 'Yoni' }]);
+  const added = call(teacher, 'POST', `/api/classes/${c103}/students`, {
     people: [
-      { email: 'Dana@School.org', name: 'Dana Levi', className: '10-3' },
-      { email: 'yoni@school.org', name: 'Yoni', className: '10-4' },
+      { email: 'Dana@School.org', name: 'Dana Levi' },
       { email: 'not-an-email', name: 'X' },
     ],
   });
-  assert.equal(added.body.added, 2);
+  assert.equal(added.body.added, 1);
   assert.equal(added.body.skipped.length, 1);
   call(teacher, 'PUT', '/api/students/dana@school.org', { voiceAnswers: true, readAloud: true, extraTimePct: 25 });
 
@@ -66,9 +77,11 @@ test('full flow: roster, test, attempt, warnings, recording, grading, results', 
   const dana = asStudent('dana@school.org');
   const yoni = asStudent('yoni@school.org');
   assert.equal(call(dana, 'GET', '/api/tests').status, 403);
-  assert.equal(call({ role: null, email: 'x@school.org' }, 'GET', '/api/my/tests').status, 403);
+  assert.equal(call({ role: 'guest', email: 'x@school.org' }, 'GET', '/api/my/tests').status, 403);
 
-  const testId = call(teacher, 'POST', '/api/tests', { data: { ...sample, classes: ['10-3'] } }).body.id;
+  const testId = call(teacher, 'POST', '/api/tests', { data: { ...sample, classIds: [c103, 'not-mine'] } }).body.id;
+  assert.deepEqual(call(teacher, 'GET', `/api/tests/${testId}`).body.data.classIds, [c103], 'unknown classes dropped');
+  assert.ok(c104);
   assert.equal(call(dana, 'GET', '/api/my/tests').body.tests.length, 0, 'drafts are hidden');
   call(teacher, 'PUT', `/api/tests/${testId}`, { status: 'open' });
   assert.equal(call(dana, 'GET', '/api/my/tests').body.tests.length, 1);
@@ -150,8 +163,8 @@ test('full flow: roster, test, attempt, warnings, recording, grading, results', 
 });
 
 test('time limit: an abandoned attempt is submitted with its saved answers', () => {
-  const { teacher, asStudent, call, tick } = setup();
-  call(teacher, 'POST', '/api/students/bulk', { people: [{ email: 's@school.org', name: 'S' }] });
+  const { teacher, asStudent, addClass, call, tick } = setup();
+  addClass(teacher, 'A', [{ email: 's@school.org', name: 'S' }]);
   const id = call(teacher, 'POST', '/api/tests', { data: { ...sample, timeLimitMin: 10 } }).body.id;
   call(teacher, 'PUT', `/api/tests/${id}`, { status: 'open' });
   const s = asStudent('s@school.org');
@@ -166,8 +179,8 @@ test('time limit: an abandoned attempt is submitted with its saved answers', () 
 });
 
 test('auto-submit after warnings, teachers, settings', () => {
-  const { teacher, asStudent, call } = setup();
-  call(teacher, 'POST', '/api/students/bulk', { people: [{ email: 's@school.org' }] });
+  const { teacher, otherTeacher, asStudent, addClass, call } = setup();
+  addClass(teacher, 'A', [{ email: 's@school.org' }]);
   assert.equal(asStudent('s@school.org').name, 's', 'name defaults to the email');
   const data = { ...sample, settings: { ...sample.settings, maxViolations: 1, onLimit: 'submit' } };
   const id = call(teacher, 'POST', '/api/tests', { data }).body.id;
@@ -177,23 +190,19 @@ test('auto-submit after warnings, teachers, settings', () => {
   assert.equal(call(s, 'POST', `/api/my/attempts/${a.id}/events`, { clientId: 'c', type: 'left' }).body.status, 'submitted');
 
   assert.equal(call(teacher, 'POST', '/api/teachers', { email: 'Other@School.org' }).status, 200);
-  assert.deepEqual(call(teacher, 'GET', '/api/users').body.teachers.map((t) => t.email), ['teacher@school.org', 'other@school.org']);
+  assert.deepEqual(call(teacher, 'GET', '/api/teachers').body.teachers.map((t) => t.email), ['teacher@school.org', 'other@school.org']);
   assert.equal(call(teacher, 'DELETE', '/api/teachers/teacher@school.org').status, 400);
+  assert.equal(call(otherTeacher('other@school.org'), 'GET', '/api/teachers').status, 403, 'only the admin manages teachers');
+  assert.equal(call(otherTeacher('other@school.org'), 'PUT', '/api/settings', { recorderUrl: '' }).status, 403);
 
   assert.equal(call(teacher, 'PUT', '/api/settings', { recorderUrl: 'javascript:alert(1)' }).status, 400);
   assert.equal(call(teacher, 'PUT', '/api/settings', { recorderUrl: 'https://example.org/rec.html' }).body.recorderUrl, 'https://example.org/rec.html');
 });
 
-test('JSON fields are split across columns and survive the round trip', () => {
-  const { parseSchema } = require('../src/server/Store.js');
-  const s = parseSchema(['id', 'n:num', 'big:json:3', 'b:bool']);
-  assert.equal(s.width, 6);
-  assert.deepEqual(s.fields.map((f) => [f.name, f.col, f.width]), [['id', 1, 1], ['n', 2, 1], ['big', 3, 3], ['b', 6, 1]]);
-});
 
 test('multiple correct answers: partial and all-or-nothing marking', () => {
-  const { teacher, asStudent, call } = setup();
-  call(teacher, 'POST', '/api/students/bulk', { people: [{ email: 's@school.org', name: 'S' }] });
+  const { teacher, asStudent, addClass, call } = setup();
+  addClass(teacher, 'A', [{ email: 's@school.org', name: 'S' }]);
   const data = {
     title: 'Two answers',
     questions: [
@@ -226,11 +235,12 @@ test('multiple correct answers: partial and all-or-nothing marking', () => {
 });
 
 test("teacher can see a student's home page", () => {
-  const { teacher, asStudent, call } = setup();
-  call(teacher, 'POST', '/api/students/bulk', { people: [{ email: 'a@school.org', name: 'A', className: '9-1' }] });
+  const { teacher, asStudent, addClass, call } = setup();
+  const c91 = addClass(teacher, '9-1', [{ email: 'a@school.org', name: 'A' }]);
+  const c92 = addClass(teacher, '9-2');
   call(teacher, 'PUT', '/api/students/a@school.org', { extraTimePct: 50 });
-  const open = call(teacher, 'POST', '/api/tests', { data: { ...sample, classes: ['9-1'] } }).body.id;
-  const other = call(teacher, 'POST', '/api/tests', { data: { ...sample, title: 'Other class', classes: ['9-2'] } }).body.id;
+  const open = call(teacher, 'POST', '/api/tests', { data: { ...sample, classIds: [c91] } }).body.id;
+  const other = call(teacher, 'POST', '/api/tests', { data: { ...sample, title: 'Other class', classIds: [c92] } }).body.id;
   call(teacher, 'PUT', `/api/tests/${open}`, { status: 'open' });
   call(teacher, 'PUT', `/api/tests/${other}`, { status: 'open' });
   const home = call(teacher, 'GET', '/api/students/a@school.org/home').body;
@@ -238,5 +248,167 @@ test("teacher can see a student's home page", () => {
   assert.deepEqual(home.tests.map((t) => t.id), [open]);
   assert.equal(home.tests[0].extraTimePct, 50);
   assert.deepEqual(home.tests, call(asStudent('a@school.org'), 'GET', '/api/my/tests').body.tests);
+  assert.deepEqual(call(asStudent('a@school.org'), 'GET', '/api/my/tests').body.classes, [{ name: '9-1', status: 'active' }]);
   assert.equal(call(asStudent('a@school.org'), 'GET', '/api/students/a@school.org/home').status, 403);
+});
+
+test('teachers only see their own classes, tests, students and results', () => {
+  const { teacher, otherTeacher, asStudent, addClass, call } = setup();
+  call(teacher, 'POST', '/api/teachers', { email: 'ruth@school.org' });
+  const ruth = otherTeacher('ruth@school.org');
+  const mineC = addClass(teacher, 'Mine', [{ email: 'a@school.org', name: 'A' }]);
+  const ruthC = addClass(ruth, 'Ruth 11-2', [{ email: 'b@school.org', name: 'B' }, { email: 'a@school.org' }]);
+  const mineT = call(teacher, 'POST', '/api/tests', { data: sample }).body.id;
+  const ruthT = call(ruth, 'POST', '/api/tests', { data: { ...sample, title: 'Ruth quiz', classIds: [mineC] } }).body.id;
+  assert.deepEqual(call(ruth, 'GET', `/api/tests/${ruthT}`).body.data.classIds, [], "can't put a test on someone else's class");
+  call(teacher, 'PUT', `/api/tests/${mineT}`, { status: 'open' });
+  call(ruth, 'PUT', `/api/tests/${ruthT}`, { status: 'open' });
+
+  assert.deepEqual(call(ruth, 'GET', '/api/tests').body.tests.map((t) => t.title), ['Ruth quiz']);
+  assert.equal(call(teacher, 'GET', '/api/tests').body.tests.length, 2, 'the admin sees everything');
+  assert.deepEqual(call(ruth, 'GET', '/api/classes').body.classes.map((c) => c.name), ['Ruth 11-2']);
+  assert.equal(call(ruth, 'GET', `/api/tests/${mineT}`).status, 404);
+  assert.equal(call(ruth, 'PUT', `/api/classes/${mineC}`, { name: 'x' }).status, 404);
+  assert.equal(call(ruth, 'PUT', '/api/students/a@school.org', { extraTimePct: 25 }).status, 200, 'shared student');
+  assert.equal(call(otherTeacher('x@school.org'), 'PUT', '/api/students/b@school.org', { extraTimePct: 25 }).status, 404);
+  assert.equal(call(ruth, 'DELETE', '/api/students/b@school.org').status, 403, 'only the admin deletes students');
+
+  // A student in both teachers' classes sees both tests; B only Ruth's.
+  assert.deepEqual(call(asStudent('a@school.org'), 'GET', '/api/my/tests').body.tests.map((t) => t.title).sort(), [sample.title, 'Ruth quiz'].sort());
+  assert.deepEqual(call(asStudent('b@school.org'), 'GET', '/api/my/tests').body.tests.map((t) => t.title), ['Ruth quiz']);
+  // Ruth's view of a student's page shows only her tests.
+  assert.deepEqual(call(ruth, 'GET', '/api/students/a@school.org/home').body.tests.map((t) => t.title), ['Ruth quiz']);
+
+  const att = call(asStudent('a@school.org'), 'POST', `/api/my/tests/${mineT}/start`, { clientId: 'c' }).body.attempt.id;
+  assert.equal(call(ruth, 'GET', `/api/attempts/${att}`).status, 404, "can't open another teacher's results");
+  assert.equal(call(teacher, 'GET', `/api/attempts/${att}`).status, 200);
+  assert.equal(call(ruth, 'GET', `/api/tests/${ruthT}/attempts`).body.notStarted.map((s) => s.id).sort().join(), 'a@school.org,b@school.org');
+  assert.ok(ruthC);
+});
+
+test('join codes: open, needs approval, off', () => {
+  const { teacher, asStudent, addClass, call } = setup();
+  const c = addClass(teacher, 'English 10');
+  const code = call(teacher, 'GET', '/api/classes').body.classes[0].joinCode;
+  assert.match(code, /^ENG-\d{4}$/);
+  const guest = asStudent('new@school.org');
+  assert.equal(guest.role, 'guest');
+  assert.equal(call(guest, 'POST', '/api/join', { code, name: 'New Kid' }).status, 404, 'joining is off by default');
+
+  call(teacher, 'PUT', `/api/classes/${c}`, { joinMode: 'open' });
+  assert.equal(call(guest, 'POST', '/api/join', { code: code.toLowerCase().replace('-', ' '), name: '' }).status, 400, 'a name is needed');
+  const joined = call(guest, 'POST', '/api/join', { code: code.toLowerCase().replace('-', ' '), name: 'New Kid' }).body;
+  assert.deepEqual(joined, { className: 'English 10', status: 'active' });
+  assert.equal(asStudent('new@school.org').name, 'New Kid');
+
+  call(teacher, 'PUT', `/api/classes/${c}`, { joinMode: 'approve', newCode: true });
+  const code2 = call(teacher, 'GET', '/api/classes').body.classes[0].joinCode;
+  assert.notEqual(code2, code);
+  assert.equal(call(asStudent('late@school.org'), 'POST', '/api/join', { code, name: 'Late' }).status, 404, 'old code stops working');
+  assert.equal(call(asStudent('late@school.org'), 'POST', '/api/join', { code: code2, name: 'Late Kid' }).body.status, 'pending');
+  const t = call(teacher, 'POST', '/api/tests', { data: sample }).body.id;
+  call(teacher, 'PUT', `/api/tests/${t}`, { status: 'open' });
+  assert.equal(call(asStudent('late@school.org'), 'GET', '/api/my/tests').body.tests.length, 0, 'pending students see no tests');
+  const cls = call(teacher, 'GET', '/api/classes').body.classes[0];
+  assert.equal(cls.students[0].status, 'pending', 'pending listed first');
+  call(teacher, 'POST', `/api/classes/${c}/students/late@school.org/approve`);
+  assert.equal(call(asStudent('late@school.org'), 'GET', '/api/my/tests').body.tests.length, 1);
+  assert.equal(call(teacher, 'POST', '/api/join', { code: code2 }).status, 400, 'teachers do not join');
+
+  call(teacher, 'DELETE', `/api/classes/${c}/students/new@school.org`);
+  assert.equal(call(asStudent('new@school.org'), 'GET', '/api/my/tests').body.tests.length, 0);
+});
+
+test('Google Classroom import (owner only)', () => {
+  const classroom = {
+    courses: () => [{ id: 'c1', name: 'English 10-3', section: 'Morning' }],
+    students: (id) => (id === 'c1' ? [{ email: 'Dana@School.org', name: 'Dana Levi' }, { email: '', name: 'Hidden Email' }, { email: 'yoni@school.org', name: 'Yoni' }] : []),
+  };
+  const { teacher, otherTeacher, asStudent, addClass, call } = setup({ classroom });
+  const c = addClass(teacher, '10-3');
+  assert.equal(call(teacher, 'GET', '/api/classes').body.classroomAvailable, true);
+  assert.equal(call(teacher, 'GET', '/api/classroom/courses').body.courses[0].name, 'English 10-3');
+  const r = call(teacher, 'POST', `/api/classes/${c}/classroom`, { courseId: 'c1' }).body;
+  assert.equal(r.added, 2);
+  assert.equal(r.skipped.length, 1);
+  assert.equal(asStudent('dana@school.org').name, 'Dana Levi');
+  assert.equal(call(teacher, 'GET', '/api/classes').body.classes[0].classroomId, 'c1');
+  assert.equal(call(teacher, 'POST', `/api/classes/${c}/classroom`, {}).body.total, 3, 're-sync uses the saved course');
+
+  call(teacher, 'POST', '/api/teachers', { email: 'ruth@school.org' });
+  const ruth = otherTeacher('ruth@school.org');
+  assert.equal(call(ruth, 'GET', '/api/classes').body.classroomAvailable, false);
+  assert.equal(call(ruth, 'GET', '/api/classroom/courses').status, 403);
+});
+
+test('upgrade from the single-teacher version keeps everything', () => {
+  const { db, api, teacher, asStudent, call } = setup();
+  // Data as the previous version left it: class names on students and tests.
+  db.insert('students', { id: 'dana@school.org', name: 'Dana Levi', className: '10-3', readAloud: true, voiceAnswers: true, extraTimePct: 25 });
+  db.insert('students', { id: 'yoni@school.org', name: 'Yoni', className: '10-4' });
+  db.insert('students', { id: 'noclass@school.org', name: 'No Class', className: '' });
+  const data = normalizeTest({ ...sample, classes: ['10-3'] });
+  delete data.classIds;
+  db.insert('tests', { id: 't1', ownerId: 'teacher@school.org', title: data.title, status: 'open', data, updatedAt: 1 });
+  const allData = normalizeTest(sample);
+  delete allData.classIds;
+  db.insert('tests', { id: 't2', ownerId: '', title: 'For everyone', status: 'open', data: { ...allData, title: 'For everyone' }, updatedAt: 2 });
+  db.insert('attempts', { id: 'a1', testId: 't1', studentId: 'dana@school.org', status: 'returned', snapshot: data, answers: { a1: 1 }, grading: {}, score: 17.5, maxScore: 100 });
+
+  api.migrate();
+  api.migrate(); // running twice changes nothing
+
+  const classes = call(teacher, 'GET', '/api/classes').body.classes;
+  assert.deepEqual(classes.map((c) => [c.name, c.students.map((s) => s.id)]), [
+    ['10-3', ['dana@school.org']],
+    ['10-4', ['yoni@school.org']],
+    ['My students', ['noclass@school.org']],
+  ]);
+  assert.equal(db.get('tests', 't2').ownerId, 'teacher@school.org');
+  assert.deepEqual(db.get('tests', 't1').data.classIds, [classes[0].id]);
+  assert.deepEqual(db.get('tests', 't2').data.classIds, []);
+  // Dana still sees her graded test and her score; Yoni sees only the test for everyone.
+  const dana = call(asStudent('dana@school.org'), 'GET', '/api/my/tests').body.tests;
+  assert.equal(dana.find((t) => t.id === 't1').attempt.score, 17.5);
+  assert.deepEqual(call(asStudent('yoni@school.org'), 'GET', '/api/my/tests').body.tests.map((t) => t.id), ['t2']);
+  assert.equal(asStudent('dana@school.org').extraTimePct, 25, 'accommodations kept');
+  assert.equal(db.get('attempts', 'a1').score, 17.5, 'results untouched');
+});
+
+test('matching (Module E vocabulary): per-match points, key hidden from students', () => {
+  const { teacher, asStudent, addClass, call } = setup();
+  addClass(teacher, 'A', [{ email: 's@school.org', name: 'S' }]);
+  const data = {
+    title: 'Vocabulary',
+    questions: [
+      {
+        id: 'm1',
+        type: 'match',
+        prompt: 'Match three of the items 1–6 to the definitions.',
+        items: ['a calendar', 'a season', 'an island', 'traffic', 'a prize', 'a label'],
+        pairs: [
+          { text: 'cars, buses, and trucks moving along a road', answer: 3 },
+          { text: 'shows days, weeks, and months in a year', answer: 0 },
+          { text: 'something you are given when you win a race', answer: 4 },
+        ],
+        pointsEach: 2,
+      },
+    ],
+  };
+  const id = call(teacher, 'POST', '/api/tests', { data }).body.id;
+  const saved = call(teacher, 'GET', `/api/tests/${id}`).body.data.questions[0];
+  assert.equal(saved.points, 6, 'total = 2 per match × 3');
+  call(teacher, 'PUT', `/api/tests/${id}`, { status: 'open' });
+  const s = asStudent('s@school.org');
+  const start = call(s, 'POST', `/api/my/tests/${id}/start`, { clientId: 'c' }).body;
+  assert.deepEqual(start.test.questions[0].pairs, data.questions[0].pairs.map((p) => ({ text: p.text })), 'answers not sent');
+  const a = start.attempt.id;
+  call(s, 'PUT', `/api/my/attempts/${a}/answers`, { clientId: 'c', answers: { m1: [3, 1, 'x', 9] } });
+  call(s, 'POST', `/api/my/attempts/${a}/submit`, { clientId: 'c' });
+  const d = call(teacher, 'GET', `/api/attempts/${a}`).body;
+  assert.deepEqual(d.attempt.answers.m1, [3, 1, null], 'bad picks dropped, one per definition');
+  assert.equal(d.auto.m1.auto, 2, 'one correct match');
+  assert.equal(core.autoGrade({ questions: [saved] }, { m1: [null, null, null] }, new Set()).m1.auto, 0);
+  assert.equal(core.autoGrade({ questions: [saved] }, { m1: [3, 0, 4] }, new Set()).m1.auto, 6);
+  assert.throws(() => core.normalizeTest({ title: 'x', questions: [{ type: 'match', items: ['only one'], pairs: [{ text: 't', answer: 0 }] }] }), /at least two items/);
 });

@@ -1,6 +1,6 @@
 // Test definitions: validation, the student-safe view, and auto-grading.
 
-const QUESTION_TYPES = ['section', 'mc', 'short', 'long'];
+const QUESTION_TYPES = ['section', 'mc', 'short', 'long', 'match'];
 const LANGUAGES = ['en-US', 'en-GB', 'he-IL', 'ar-SA', 'ru-RU', 'fr-FR', 'es-ES', 'de-DE'];
 const ON_LIMIT = ['log', 'lock', 'submit'];
 const SHOW_RESULTS = ['none', 'score', 'full'];
@@ -59,7 +59,22 @@ function normalizeTest(input) {
         .slice(0, 30);
     }
     if (type === 'long') out.modelAnswer = str(q.modelAnswer, 5000);
-    if (!out.prompt.trim() && !out.title.trim()) throw new ValidationError(`Question ${i + 1} has no text.`);
+    if (type === 'match') {
+      // Module E vocabulary: numbered items, definitions that each match one
+      // item (extra items are distractors), points for each correct match.
+      const items = (Array.isArray(q.items) ? q.items : []).map((x) => str(x, 300).trim()).filter(Boolean).slice(0, 20);
+      if (items.length < 2) throw new ValidationError(`Question ${i + 1} (matching) needs at least two items.`);
+      const pairs = (Array.isArray(q.pairs) ? q.pairs : [])
+        .map((p) => ({ text: str(p && p.text, 500).trim(), answer: int(p && p.answer, 0, items.length - 1, 0) }))
+        .filter((p) => p.text)
+        .slice(0, 20);
+      if (!pairs.length) throw new ValidationError(`Question ${i + 1} (matching) needs at least one definition.`);
+      out.items = items;
+      out.pairs = pairs;
+      out.pointsEach = num(q.pointsEach !== undefined ? q.pointsEach : q.points / pairs.length, 0, 100, 1);
+      out.points = Math.round(out.pointsEach * pairs.length * 100) / 100;
+    }
+    if (!out.prompt.trim() && !out.title.trim() && type !== 'match') throw new ValidationError(`Question ${i + 1} has no text.`);
     return out;
   });
 
@@ -72,6 +87,9 @@ function normalizeTest(input) {
       .map((c) => str(c, 60).trim())
       .filter(Boolean)
       .slice(0, 50),
+    // Which classes the test is for (none = all of the teacher's classes).
+    // `classes` (names) is from the single-teacher version, kept for upgrading.
+    classIds: [...new Set((Array.isArray(input.classIds) ? input.classIds : []).map((c) => str(c, 40)).filter(Boolean))].slice(0, 50),
     settings: {
       requireFullscreen: s.requireFullscreen !== false,
       maxViolations: int(s.maxViolations, 0, 50, 3),
@@ -90,9 +108,11 @@ function studentView(test) {
   return {
     ...test,
     // Students are told how many answers to choose, not which.
-    questions: test.questions.map(({ correct, accepted, modelAnswer, scoring, ...rest }) =>
-      rest.multiple ? { ...rest, choose: correct.length } : rest,
-    ),
+    questions: test.questions.map(({ correct, accepted, modelAnswer, scoring, ...rest }) => {
+      if (rest.multiple) return { ...rest, choose: correct.length };
+      if (rest.type === 'match') return { ...rest, pairs: rest.pairs.map((p) => ({ text: p.text })) };
+      return rest;
+    }),
   };
 }
 
@@ -126,10 +146,15 @@ function autoGrade(test, answers, recordedQuestionIds) {
     if (q.type === 'section') continue;
     const a = answers[q.id];
     const recorded = recordedQuestionIds.has(q.id);
-    const empty = a === undefined || a === null || (typeof a === 'string' && !a.trim()) || (Array.isArray(a) && !a.length);
+    const empty =
+      a === undefined || a === null || (typeof a === 'string' && !a.trim()) || (Array.isArray(a) && !a.some((x) => x !== null && x !== undefined));
     let auto = null;
     let review = true;
-    if (q.type === 'mc' && q.multiple && Array.isArray(a) && a.length) {
+    if (q.type === 'match' && Array.isArray(a) && !empty) {
+      const right = q.pairs.filter((p, k) => a[k] === p.answer).length;
+      auto = Math.round(right * q.pointsEach * 100) / 100;
+      review = recorded;
+    } else if (q.type === 'mc' && q.multiple && Array.isArray(a) && a.length) {
       auto = scoreMultiple(q, a);
       review = recorded;
     } else if (q.type === 'mc' && !q.multiple && Number.isInteger(a)) {

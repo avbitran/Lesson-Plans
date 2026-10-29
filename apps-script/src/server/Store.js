@@ -1,10 +1,14 @@
-// Tables kept as tabs of a Google Sheet. One row per record, one column per
-// field. JSON fields come last and are split over several columns because a
-// cell holds at most 50,000 characters.
+// Tables kept as tabs of a Google Sheet: one row per record, one column per
+// field. Columns are found by their header name, so a newer version can add
+// fields (they are appended at the end) without moving anything that is
+// already there. JSON fields are split over several columns (name#1, name#2,
+// ...) because a cell holds at most 50,000 characters.
 
 const SCHEMAS = {
-  students: ['id', 'name', 'className', 'readAloud:bool', 'voiceAnswers:bool', 'extraTimePct:num'],
-  teachers: ['id'],
+  students: ['id', 'name', 'className', 'readAloud:bool', 'voiceAnswers:bool', 'extraTimePct:num', 'createdAt:num'],
+  teachers: ['id', 'name', 'addedAt:num'],
+  classes: ['id', 'ownerId', 'name', 'joinCode', 'joinMode', 'classroomId', 'createdAt:num'],
+  members: ['id', 'classId', 'studentId', 'status', 'addedAt:num'],
   tests: ['id', 'ownerId', 'title', 'status', 'updatedAt:num', 'data:json:8'],
   attempts: [
     'id', 'testId', 'studentId', 'status', 'startedAt:num', 'deadlineAt:num', 'submittedAt:num', 'submitReason',
@@ -17,16 +21,13 @@ const SCHEMAS = {
 const JSON_CHUNK = 45000;
 
 function parseSchema(spec) {
-  const fields = [];
-  let col = 1;
-  for (const s of spec) {
+  return spec.map((s) => {
     const [name, type = 'str', n] = s.split(':');
     const width = type === 'json' ? Number(n) : 1;
-    fields.push({ name, type, col, width });
-    col += width;
-  }
-  const light = fields.filter((f) => f.type !== 'json');
-  return { fields, width: col - 1, lightWidth: light.length ? light[light.length - 1].col : 0 };
+    const headers = [];
+    for (let i = 1; i <= width; i++) headers.push(width > 1 || type === 'json' ? `${name}#${i}` : name);
+    return { name, type, width, headers };
+  });
 }
 
 const PARSED = {};
@@ -52,7 +53,7 @@ function encodeField(f, v) {
 
 function decodeField(f, cells) {
   if (f.type === 'json') {
-    const s = cells.join('');
+    const s = cells.map((c) => (c === undefined || c === null ? '' : String(c))).join('');
     if (!s) return null;
     try {
       return JSON.parse(s);
@@ -62,47 +63,76 @@ function decodeField(f, cells) {
   }
   const v = cells[0];
   if (f.type === 'bool') return v === true || v === 'TRUE' || v === 'true';
-  if (f.type === 'num') return v === '' || v === null ? null : Number(v);
+  if (f.type === 'num') return v === '' || v === null || v === undefined ? null : Number(v);
   return v === null || v === undefined ? '' : String(v);
 }
 
 class SheetStore {
   constructor(ss) {
     this.ss = ss;
-    this.sheets = {};
+    this.layouts = {};
     this.cache = {};
   }
 
-  sheet(table) {
-    if (this.sheets[table]) return this.sheets[table];
-    const schema = PARSED[table];
+  // Where each field lives in this table's tab. Creates the tab, and any
+  // missing columns (appended at the end), the first time it's needed.
+  layout(table) {
+    if (this.layouts[table]) return this.layouts[table];
+    const fields = PARSED[table];
     let sh = this.ss.getSheetByName(table);
     if (!sh) {
       sh = this.ss.insertSheet(table);
-      const header = [];
-      for (const f of schema.fields) for (let i = 0; i < f.width; i++) header.push(f.width > 1 ? `${f.name}#${i + 1}` : f.name);
-      sh.getRange(1, 1, 1, header.length).setValues([header]).setFontWeight('bold');
       sh.setFrozenRows(1);
-      // Plain text, so Sheets never turns a class like "10-3" into a date.
-      for (const f of schema.fields)
-        if (f.type === 'str' || f.type === 'json') sh.getRange(1, f.col, sh.getMaxRows(), f.width).setNumberFormat('@');
     }
-    this.sheets[table] = sh;
-    return sh;
+    const lastCol = sh.getLastColumn();
+    const header = lastCol > 0 ? sh.getRange(1, 1, 1, lastCol).getValues()[0].map(String) : [];
+    const at = {};
+    header.forEach((name, i) => {
+      if (name && !(name in at)) at[name] = i + 1;
+    });
+    const missing = [];
+    for (const f of fields) for (const name of f.headers) if (!(name in at)) missing.push({ f, name });
+    if (missing.length) {
+      const first = header.length + 1;
+      const need = header.length + missing.length;
+      if (sh.getMaxColumns() < need) sh.insertColumnsAfter(sh.getMaxColumns(), need - sh.getMaxColumns());
+      sh.getRange(1, first, 1, missing.length).setValues([missing.map((m) => m.name)]).setFontWeight('bold');
+      missing.forEach((m, i) => {
+        at[m.name] = first + i;
+        // Plain text, so Sheets never turns a class like "10-3" into a date.
+        if (m.f.type === 'str' || m.f.type === 'json') sh.getRange(1, first + i, sh.getMaxRows(), 1).setNumberFormat('@');
+      });
+    }
+    const cols = {};
+    for (const f of fields) cols[f.name] = f.headers.map((n) => at[n]);
+    const lightCols = fields.filter((f) => f.type !== 'json').map((f) => cols[f.name][0]);
+    const width = Math.max(header.length + missing.length, 1);
+    const l = { sh, fields, cols, width, lightWidth: Math.max(...lightCols), idCol: cols.id[0] };
+    this.layouts[table] = l;
+    return l;
+  }
+
+  sheet(table) {
+    return this.layout(table).sh;
   }
 
   rowToObject(table, row, light) {
+    const l = this.layout(table);
     const obj = {};
-    for (const f of PARSED[table].fields) {
+    for (const f of l.fields) {
       if (light && f.type === 'json') continue;
-      obj[f.name] = decodeField(f, row.slice(f.col - 1, f.col - 1 + f.width));
+      obj[f.name] = decodeField(f, l.cols[f.name].map((c) => row[c - 1]));
     }
     return obj;
   }
 
   objectToRow(table, obj) {
-    const row = [];
-    for (const f of PARSED[table].fields) row.push.apply(row, encodeField(f, obj[f.name]));
+    const l = this.layout(table);
+    const row = new Array(l.width).fill('');
+    for (const f of l.fields) {
+      const cells = encodeField(f, obj[f.name]);
+      l.cols[f.name].forEach((c, i) => (row[c - 1] = cells[i]));
+    }
     return row;
   }
 
@@ -110,21 +140,20 @@ class SheetStore {
   all(table, light) {
     const key = table + (light ? ':light' : '');
     if (this.cache[key]) return this.cache[key];
-    const sh = this.sheet(table);
-    const n = sh.getLastRow() - 1;
-    const schema = PARSED[table];
-    const width = light ? schema.lightWidth : schema.width;
-    const rows = n > 0 ? sh.getRange(2, 1, n, width).getValues() : [];
-    const out = rows.filter((r) => r[0] !== '').map((r) => this.rowToObject(table, r, light));
+    const l = this.layout(table);
+    const n = l.sh.getLastRow() - 1;
+    const width = light ? l.lightWidth : l.width;
+    const rows = n > 0 ? l.sh.getRange(2, 1, n, width).getValues() : [];
+    const out = rows.filter((r) => r[l.idCol - 1] !== '' && r[l.idCol - 1] !== null).map((r) => this.rowToObject(table, r, light));
     this.cache[key] = out;
     return out;
   }
 
   rowIndex(table, id) {
-    const sh = this.sheet(table);
-    const n = sh.getLastRow() - 1;
+    const l = this.layout(table);
+    const n = l.sh.getLastRow() - 1;
     if (n <= 0) return -1;
-    const ids = sh.getRange(2, 1, n, 1).getValues();
+    const ids = l.sh.getRange(2, l.idCol, n, 1).getValues();
     for (let i = 0; i < ids.length; i++) if (String(ids[i][0]) === String(id)) return i + 2;
     return -1;
   }
@@ -132,8 +161,8 @@ class SheetStore {
   get(table, id) {
     const r = this.rowIndex(table, id);
     if (r < 0) return null;
-    const row = this.sheet(table).getRange(r, 1, 1, PARSED[table].width).getValues()[0];
-    return this.rowToObject(table, row, false);
+    const l = this.layout(table);
+    return this.rowToObject(table, l.sh.getRange(r, 1, 1, l.width).getValues()[0], false);
   }
 
   insert(table, obj) {
@@ -148,10 +177,14 @@ class SheetStore {
   update(table, id, fields) {
     const r = this.rowIndex(table, id);
     if (r < 0) throw new HttpError(404, 'Record not found.');
-    const sh = this.sheet(table);
-    for (const f of PARSED[table].fields) {
+    const l = this.layout(table);
+    for (const f of l.fields) {
       if (!(f.name in fields) || f.name === 'id') continue;
-      sh.getRange(r, f.col, 1, f.width).setValues([encodeField(f, fields[f.name])]);
+      const cells = encodeField(f, fields[f.name]);
+      const cols = l.cols[f.name];
+      const contiguous = cols.every((c, i) => c === cols[0] + i);
+      if (contiguous) l.sh.getRange(r, cols[0], 1, cols.length).setValues([cells]);
+      else cols.forEach((c, i) => l.sh.getRange(r, c, 1, 1).setValues([[cells[i]]]));
     }
     this.cache = {};
   }
@@ -163,13 +196,13 @@ class SheetStore {
   }
 
   removeWhere(table, pred) {
-    const sh = this.sheet(table);
-    const n = sh.getLastRow() - 1;
+    const l = this.layout(table);
+    const n = l.sh.getLastRow() - 1;
     if (n <= 0) return;
-    const rows = sh.getRange(2, 1, n, PARSED[table].lightWidth || 1).getValues();
-    for (let i = rows.length - 1; i >= 0; i--) if (pred(this.rowToObject(table, rows[i], true))) sh.deleteRow(i + 2);
+    const rows = l.sh.getRange(2, 1, n, l.lightWidth).getValues();
+    for (let i = rows.length - 1; i >= 0; i--) if (pred(this.rowToObject(table, rows[i], true))) l.sh.deleteRow(i + 2);
     this.cache = {};
   }
 }
 
-if (typeof module !== 'undefined') module.exports = { SCHEMAS, PARSED, parseSchema };
+if (typeof module !== 'undefined') module.exports = { SCHEMAS, PARSED, parseSchema, SheetStore, encodeField, decodeField };

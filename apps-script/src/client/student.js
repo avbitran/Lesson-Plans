@@ -17,8 +17,61 @@
     );
   }
 
+  // Joining a class with the code the teacher gives out. Google already knows
+  // the student's school email, so a name is all they type.
+  function joinForm({ firstTime }) {
+    const code = h('input', { class: 'join-input', placeholder: 'ENG-4821', autocomplete: 'off', 'aria-label': 'Class code' });
+    const name = firstTime ? h('input', { placeholder: 'First and last name', autocomplete: 'name', 'aria-label': 'Your full name' }) : null;
+    const error = h('p', { class: 'error', role: 'alert' });
+    const btn = h('button', { class: 'btn btn-primary btn-big', type: 'submit' }, 'Join the class');
+    return h(
+      'form',
+      {
+        class: 'form',
+        onsubmit: async (e) => {
+          e.preventDefault();
+          error.textContent = '';
+          btn.disabled = true;
+          try {
+            const r = await api('POST', '/api/join', { code: code.value, name: name ? name.value : '' });
+            if (firstTime) Object.assign(BOOT.user, { role: 'student', name: name.value.trim() || BOOT.user.email.split('@')[0] });
+            toast(r.status === 'pending' ? `Asked to join ${r.className}. Your teacher needs to approve you.` : `You joined ${r.className}.`, 'ok');
+            location.hash = '#my';
+            App.route();
+          } catch (err) {
+            error.textContent = err.message;
+            btn.disabled = false;
+          }
+        },
+      },
+      h('label', {}, 'Class code (from your teacher)', code),
+      name ? h('label', {}, 'Your full name', name) : null,
+      error,
+      btn,
+    );
+  }
+
+  App.joinPage = function () {
+    clear(
+      app(),
+      h(
+        'main',
+        { class: 'center' },
+        h(
+          'div',
+          { class: 'card join-card' },
+          h('h1', { text: 'Online Tests' }),
+          h('p', {}, 'You are signed in as ', h('strong', { text: BOOT.user.email }), '. To start, join your class with the code your teacher gives you.'),
+          joinForm({ firstTime: true }),
+          h('p', { class: 'small muted', text: 'No code? Ask your teacher to add this email to the class.' }),
+        ),
+      ),
+    );
+  };
+
   async function list() {
-    const { tests } = await api('GET', '/api/my/tests');
+    const { tests, classes = [] } = await api('GET', '/api/my/tests');
+    const pending = classes.filter((c) => c.status === 'pending');
     clear(
       app(),
       header(),
@@ -26,6 +79,7 @@
         'main',
         { class: 'wrap' },
         h('h1', { text: `Hi ${BOOT.user.name}` }),
+        pending.length ? h('p', { class: 'card', text: `Waiting for your teacher to let you into ${pending.map((c) => c.name).join(', ')}. Check again later.` }) : null,
         tests.length
           ? h(
               'div',
@@ -41,6 +95,7 @@
               ),
             )
           : h('p', { class: 'muted', text: 'No tests for you right now.' }),
+        h('details', { class: 'card join-more' }, h('summary', { text: 'Join another class' }), joinForm({ firstTime: false })),
       ),
     );
   }
@@ -48,6 +103,7 @@
   function answerText(q, a) {
     if (a === undefined || a === null || a === '' || (Array.isArray(a) && !a.length)) return '—';
     if (q.type === 'mc') return optionText(q, a);
+    if (q.type === 'match') return q.pairs.map((p, k) => `${Number.isInteger(a[k]) ? a[k] + 1 : '–'} → ${p.text}`).join('\n');
     return a;
   }
 
@@ -83,6 +139,7 @@
                 recs[q.id] ? recordingPlayer(recs[q.id].id, 'Listen to my answer') : null,
                 !right && q.type === 'mc' ? h('p', { class: 'ok', text: `Correct answer${q.multiple ? 's' : ''}: ${optionText(q, q.correct)}` }) : null,
                 !right && q.type === 'short' && q.accepted?.length ? h('p', { class: 'ok', text: `Correct answer: ${q.accepted[0]}` }) : null,
+                !right && q.type === 'match' ? h('p', { class: 'ok pre', text: `Correct: ${q.pairs.map((p) => `${p.answer + 1} → ${p.text}`).join('\n')}` }) : null,
                 m.comment ? h('p', { class: 'comment', text: `💬 ${m.comment}` }) : null,
               );
             })

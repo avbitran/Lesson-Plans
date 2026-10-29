@@ -4,10 +4,7 @@
 const app = document.getElementById('app');
 let refreshTimer = null;
 
-const NAV = [
-  ['Tests', '#tests'],
-  ['Students', '#people'],
-];
+const NAV = [['Tests', '#tests'], ['Classes', '#classes']].concat(BOOT.user.admin ? [['Teachers', '#teachers'], ['Settings', '#settings']] : []);
 
 function page(...children) {
   clear(app, header(NAV), h('main', { class: 'wrap' }, children));
@@ -61,7 +58,7 @@ async function testsPage() {
                 {},
                 h('td', {}, h('a', { href: `#results/${t.id}`, class: 'strong', text: t.title }), h('div', { class: 'muted small', text: `${t.questionCount} questions · edited ${fmtDate(t.updatedAt)}` })),
                 h('td', {}, h('span', { class: `badge badge-${t.status}`, text: STATUS_LABEL[t.status] })),
-                h('td', { text: t.classes.join(', ') || 'All students' }),
+                h('td', {}, t.classes.join(', ') || 'All my classes', t.ownerId && t.ownerId !== BOOT.user.id ? h('div', { class: 'muted small', text: `by ${t.ownerId}` }) : null),
                 h('td', { text: t.active || '' }),
                 h('td', {}, t.toGrade ? h('span', { class: 'badge badge-warn', text: t.toGrade }) : ''),
                 h('td', { text: t.returned || '' }),
@@ -112,19 +109,33 @@ function newQuestion(type) {
   }
   if (type === 'short') q.accepted = [];
   if (type === 'long') q.modelAnswer = '';
+  if (type === 'match') {
+    q.prompt = 'Match the items to the definitions. Write the number of the item next to its definition.';
+    q.items = ['', '', '', '', '', ''];
+    q.pairs = [{ text: '', answer: 0 }, { text: '', answer: 1 }, { text: '', answer: 2 }];
+    q.pointsEach = 2;
+  }
   return q;
 }
 
-const TYPE_LABEL = { section: 'Text / reading passage', mc: 'Multiple choice', short: 'Short answer (auto-marked)', long: 'Open answer (you mark it)' };
+const TYPE_LABEL = {
+  section: 'Text / reading passage',
+  mc: 'Multiple choice',
+  short: 'Short answer (auto-marked)',
+  long: 'Open answer (you mark it)',
+  match: 'Matching (vocabulary)',
+};
 
 async function editorPage(id) {
   let status = 'draft';
   let data;
+  let ownerId = BOOT.user.id;
   if (id === 'new') data = blankTest();
   else {
     const r = await api('GET', `/api/tests/${id}`);
     data = r.data;
     status = r.status;
+    ownerId = r.ownerId;
   }
   let dirty = false;
   const touch = () => (dirty = true);
@@ -145,6 +156,46 @@ async function editorPage(id) {
 
   const qList = h('div', { class: 'q-editor-list' });
 
+  // Items on the left (numbered), definitions on the right, each with the
+  // number of its correct item. More items than definitions = distractors.
+  function matchEditor(q) {
+    const box = h('div', { class: 'match-editor' });
+    const draw = () => {
+      const items = h('textarea', { rows: Math.max(4, q.items.length + 1), value: q.items.join('\n'), placeholder: 'a calendar\na season\nan island\ntraffic\na prize\na label' });
+      items.addEventListener('input', () => {
+        q.items = items.value.split('\n').map((x) => x.trim());
+        touch();
+      });
+      items.addEventListener('change', () => {
+        q.items = q.items.filter(Boolean);
+        q.pairs.forEach((p) => (p.answer = Math.min(p.answer, Math.max(0, q.items.length - 1))));
+        draw();
+      });
+      const rows = q.pairs.map((p, k) =>
+        h(
+          'div',
+          { class: 'row tight' },
+          h(
+            'select',
+            { 'aria-label': 'Correct item', onchange: (e) => ((p.answer = Number(e.target.value)), touch()) },
+            q.items.filter(Boolean).map((it, i) => h('option', { value: i, selected: p.answer === i }, `${i + 1}. ${it}`)),
+          ),
+          bind(p, 'text', h('input', { value: p.text, class: 'grow', placeholder: 'Definition, e.g. "shows days, weeks, and months in a year"' })),
+          q.pairs.length > 1 ? h('button', { class: 'btn btn-ghost', type: 'button', 'aria-label': 'Remove definition', onclick: () => (q.pairs.splice(k, 1), touch(), draw()) }, '✕') : null,
+        ),
+      );
+      clear(
+        box,
+        h('label', {}, h('span', { text: 'Items, one per line (students see them numbered 1, 2, 3…)' }), items),
+        h('span', { class: 'small muted', text: 'Definitions: pick the correct item for each. Items not used are distractors.' }),
+        rows,
+        q.pairs.length < 20 ? h('button', { class: 'btn btn-ghost', type: 'button', onclick: () => (q.pairs.push({ text: '', answer: 0 }), touch(), draw()) }, '+ Definition') : null,
+      );
+    };
+    draw();
+    return box;
+  }
+
   function questionEditor(q, index) {
     const move = (d) => {
       const j = index + d;
@@ -158,6 +209,12 @@ async function editorPage(id) {
       body.append(
         field('Heading (optional)', bind(q, 'title', h('input', { value: q.title }))),
         field('Text students read (instructions, a story, a passage…)', bind(q, 'prompt', h('textarea', { rows: 5, value: q.prompt }))),
+      );
+    } else if (q.type === 'match') {
+      body.append(
+        field('Instructions', bind(q, 'prompt', h('textarea', { rows: 2, value: q.prompt }))),
+        h('div', { class: 'row' }, field('Points for each correct match', bind(q, 'pointsEach', h('input', { type: 'number', min: 0, step: 0.5, value: q.pointsEach, class: 'narrow-input' }), Number))),
+        matchEditor(q),
       );
     } else {
       body.append(
@@ -281,7 +338,7 @@ async function editorPage(id) {
   }
 
   function totalPoints() {
-    return data.questions.reduce((sum, q) => sum + (q.type === 'section' ? 0 : Number(q.points) || 0), 0);
+    return data.questions.reduce((sum, q) => sum + (q.type === 'section' ? 0 : q.type === 'match' ? (Number(q.pointsEach) || 0) * q.pairs.length : Number(q.points) || 0), 0);
   }
 
   function drawQuestions() {
@@ -292,7 +349,7 @@ async function editorPage(id) {
         'div',
         { class: 'card add-row' },
         h('span', { class: 'muted', text: 'Add:' }),
-        ['mc', 'short', 'long', 'section'].map((t) =>
+        ['mc', 'short', 'long', 'match', 'section'].map((t) =>
           h('button', { class: 'btn', type: 'button', onclick: () => (data.questions.push(newQuestion(t)), touch(), drawQuestions()) }, `+ ${TYPE_LABEL[t]}`),
         ),
       ),
@@ -325,11 +382,31 @@ async function editorPage(id) {
     }
   }
 
-  const classesInput = h('input', { value: data.classes.join(', '), placeholder: 'e.g. 10-3, 10-4 (empty = all students)' });
-  classesInput.addEventListener('input', () => {
-    data.classes = classesInput.value.split(',').map((c) => c.trim()).filter(Boolean);
-    touch();
-  });
+  // Tick the classes the test is for; none ticked = all of the owner's classes.
+  data.classIds = data.classIds || [];
+  const classesBox = h('div', { class: 'class-picks' }, h('span', { class: 'muted', text: 'Loading classes…' }));
+  api('GET', '/api/classes').then(({ classes }) => {
+    const theirs = classes.filter((c) => c.ownerId === ownerId);
+    if (!theirs.length) return clear(classesBox, h('span', { class: 'muted' }, 'No classes yet. ', h('a', { href: '#classes' }, 'Create a class'), ' first.'));
+    clear(
+      classesBox,
+      theirs.map((c) =>
+        h(
+          'label',
+          { class: 'check' },
+          h('input', {
+            type: 'checkbox',
+            checked: data.classIds.includes(c.id),
+            onchange: (e) => {
+              data.classIds = e.target.checked ? [...new Set([...data.classIds, c.id])] : data.classIds.filter((x) => x !== c.id);
+              touch();
+            },
+          }),
+          `${c.name} (${c.students.filter((x) => x.status === 'active').length} students)`,
+        ),
+      ),
+    );
+  }).catch((e) => clear(classesBox, h('span', { class: 'error', text: e.message })));
 
   // Downloads are unreliable inside Google's frame, so show the JSON to copy.
   const exportJson = () => {
@@ -381,7 +458,7 @@ async function editorPage(id) {
           ),
         ),
       ),
-      field('Classes', classesInput, "Must match the class you give students on the Students page."),
+      h('div', {}, h('span', { class: 'strong', text: 'Classes' }), h('small', { class: 'muted', text: ' — none ticked = all your classes' }), classesBox),
     ),
     h(
       'details',
@@ -618,6 +695,24 @@ async function gradePage(attemptId) {
         ),
       );
     }
+    if (q.type === 'match') {
+      const picks = Array.isArray(a) ? a : [];
+      return h(
+        'ol',
+        { class: 'mc-review' },
+        q.pairs.map((p, k) => {
+          const got = picks[k];
+          const ok = got === p.answer;
+          return h(
+            'li',
+            { class: ok ? 'correct' : got === null || got === undefined ? '' : 'chosen' },
+            h('span', { class: 'letter', text: got === null || got === undefined ? '–' : got + 1 }),
+            p.text,
+            ok ? ' ✓' : ` (correct: ${p.answer + 1}. ${q.items[p.answer]})`,
+          );
+        }),
+      );
+    }
     return h('div', { class: 'student-answer pre', text: a === undefined || a === '' ? '(no written answer)' : a });
   };
 
@@ -720,34 +815,27 @@ async function gradePage(attemptId) {
   updateTotal();
 }
 
-// ==================================================================== people
+// =================================================================== classes
 
-async function peoplePage() {
+const JOIN_MODES = [
+  ['off', 'Off'],
+  ['open', 'On — anyone with the code joins'],
+  ['approve', 'On — I approve each student'],
+];
+
+function parseLines(text) {
+  return text
+    .split('\n')
+    .map((line) => line.split(/[,\t;]/).map((x) => x.trim()))
+    .filter(([email]) => email)
+    .map(([email, name]) => ({ email, name }));
+}
+
+async function classesPage() {
   App.studentsCache = null; // the student view's "As:" list reloads after changes
-  const [{ students, teachers }, settings] = await Promise.all([api('GET', '/api/users'), api('GET', '/api/settings')]);
-  const classes = [...new Set(students.map((s) => s.className).filter(Boolean))].sort();
-  let filter = '';
-  try {
-    filter = sessionStorage.getItem('classFilter') || '';
-  } catch (e) {}
-
-  const bulk = h('textarea', { rows: 6, placeholder: 'dana.levi@school.org, Dana Levi, 10-3\nyoni.cohen@school.org, Yoni Cohen, 10-3' });
-  const addStudents = async () => {
-    const people = bulk.value
-      .split('\n')
-      .map((line) => line.split(/[,\t;]/).map((x) => x.trim()))
-      .filter(([email]) => email)
-      .map(([email, name, className]) => ({ email, name, className }));
-    if (!people.length) return toast('Write one student per line: email, name, class', 'warn');
-    try {
-      const r = await api('POST', '/api/students/bulk', { people });
-      toast(`Added or updated ${r.added} student${r.added === 1 ? '' : 's'}.`, 'ok');
-      if (r.skipped.length) modal('Some lines were skipped', h('ul', {}, r.skipped.map((x) => h('li', { text: x }))));
-      route();
-    } catch (e) {
-      toast(e.message, 'error');
-    }
-  };
+  const { classes, classroomAvailable, classroomNeedsSetup } = await api('GET', '/api/classes');
+  let courses = null;
+  const loadCourses = async () => (courses ||= (await api('GET', '/api/classroom/courses')).courses);
 
   const update = async (s, patch) => {
     try {
@@ -758,122 +846,186 @@ async function peoplePage() {
       toast(e.message, 'error');
     }
   };
+  const act = async (fn, okMessage) => {
+    try {
+      const r = await fn();
+      if (okMessage) toast(typeof okMessage === 'function' ? okMessage(r) : okMessage, 'ok');
+      if (r && r.skipped && r.skipped.length) modal('Some students were skipped', h('ul', {}, r.skipped.map((x) => h('li', { text: x }))));
+      route();
+    } catch (e) {
+      toast(e.message, 'error');
+    }
+  };
 
-  const tbody = h('tbody');
-  const draw = () =>
-    clear(
-      tbody,
-      students
-        .filter((s) => !filter || s.className === filter)
-        .map((s) => {
-          const name = h('input', { value: s.name });
-          name.addEventListener('change', () => update(s, { name: name.value }));
-          const className = h('input', { value: s.className, class: 'narrow-input' });
-          className.addEventListener('change', () => update(s, { className: className.value }));
-          return h(
-            'tr',
-            {},
-            h('td', {}, name, h('div', { class: 'muted small' }, s.email, ' · ', h('a', { href: `#studentview/${encodeURIComponent(s.id)}` }, '👁 what they see'))),
-            h('td', {}, className),
-            h('td', {}, h('input', { type: 'checkbox', checked: s.readAloud, 'aria-label': 'Read-aloud', onchange: (e) => update(s, { readAloud: e.target.checked }) })),
-            h('td', {}, h('input', { type: 'checkbox', checked: s.voiceAnswers, 'aria-label': 'Voice answers', onchange: (e) => update(s, { voiceAnswers: e.target.checked }) })),
-            h(
-              'td',
-              {},
-              h('select', { 'aria-label': 'Extra time', onchange: (e) => update(s, { extraTimePct: Number(e.target.value) }) }, [0, 25, 33, 50, 100].map((p) => h('option', { value: p, selected: p === s.extraTimePct }, p ? `+${p}%` : 'none'))),
-            ),
-            h(
-              'td',
-              {},
-              h('button', {
-                class: 'btn btn-ghost danger',
-                onclick: () =>
-                  modal(`Remove ${s.name}?`, h('p', { text: 'Their test answers and recordings are deleted too.' }), [
-                    ['Cancel', null],
-                    ['Remove', async () => (await api('DELETE', `/api/students/${encodeURIComponent(s.id)}`), route()), 'btn-danger'],
-                  ]),
-              }, 'Remove'),
-            ),
-          );
-        }),
+  function classCard(c) {
+    const pending = c.students.filter((s) => s.status === 'pending');
+    const active = c.students.filter((s) => s.status === 'active');
+    const name = h('input', { value: c.name, class: 'class-name', 'aria-label': 'Class name' });
+    name.addEventListener('change', () => act(() => api('PUT', `/api/classes/${c.id}`, { name: name.value }), 'Renamed.'));
+
+    const joinMode = h(
+      'select',
+      { 'aria-label': 'Joining with the code', onchange: (e) => act(() => api('PUT', `/api/classes/${c.id}`, { joinMode: e.target.value }), 'Saved.') },
+      JOIN_MODES.map(([v, l]) => h('option', { value: v, selected: c.joinMode === v }, l)),
+    );
+    const join = h(
+      'div',
+      { class: 'join-box' },
+      h('div', {}, h('div', { class: 'small muted', text: 'Class code' }), h('div', { class: `join-code ${c.joinMode === 'off' ? 'off' : ''}`, text: c.joinCode })),
+      h(
+        'div',
+        { class: 'grow' },
+        h('label', { class: 'row tight' }, 'Joining:', joinMode),
+        h('p', { class: 'small muted', text: c.joinMode === 'off' ? 'Turn joining on, then tell students to open the app link and type the code.' : 'Students open the app link and type this code. Turn joining off when everyone is in.' }),
+      ),
+      h('button', { class: 'btn btn-ghost', onclick: () => act(() => api('PUT', `/api/classes/${c.id}`, { newCode: true }), 'New code made. The old one no longer works.') }, 'New code'),
     );
 
-  const filterSel = h(
-    'select',
-    {
-      onchange: (e) => {
-        filter = e.target.value;
-        try {
-          sessionStorage.setItem('classFilter', filter);
-        } catch (err) {}
-        draw();
-      },
-    },
-    h('option', { value: '' }, 'All classes'),
-    classes.map((c) => h('option', { value: c, selected: c === filter }, c)),
-  );
+    const bulk = h('textarea', { rows: 3, placeholder: 'dana.levi@school.org, Dana Levi\nyoni.cohen@school.org, Yoni Cohen' });
+    const addByEmail = h(
+      'details',
+      {},
+      h('summary', { text: 'Add students by email' }),
+      h('p', { class: 'small muted', text: 'One per line: school email, name. Useful for one student who can’t use the code.' }),
+      bulk,
+      h('div', { class: 'row end' }, h('button', { class: 'btn', onclick: () => {
+        const people = parseLines(bulk.value);
+        if (!people.length) return toast('Write one student per line: email, name', 'warn');
+        act(() => api('POST', `/api/classes/${c.id}/students`, { people }), (r) => `Added ${r.added} student${r.added === 1 ? '' : 's'}.`);
+      } }, 'Add')),
+    );
 
-  const teacherEmail = h('input', { type: 'email', placeholder: 'colleague@school.org', class: 'grow' });
-  const recorderUrl = h('input', { value: settings.recorderUrl, class: 'grow' });
+    let classroom = null;
+    if (classroomAvailable) {
+      const pick = h('select', { 'aria-label': 'Classroom class' }, h('option', { value: '' }, c.classroomId ? 'Linked Classroom class' : 'Choose a Classroom class…'));
+      const loadBtn = h('button', { class: 'btn', onclick: async () => {
+        if (!pick.value && !c.classroomId) {
+          try {
+            const list = await loadCourses();
+            clear(pick, h('option', { value: '' }, 'Choose a Classroom class…'), list.map((x) => h('option', { value: x.id, selected: x.id === c.classroomId }, `${x.name}${x.section ? ` (${x.section})` : ''}`)));
+            if (!list.length) toast('No active Google Classroom classes found for your account.', 'warn');
+            loadBtn.textContent = 'Import students';
+            return;
+          } catch (e) {
+            return toast(e.message, 'error');
+          }
+        }
+        act(() => api('POST', `/api/classes/${c.id}/classroom`, { courseId: pick.value }), (r) => `Imported ${r.added} of ${r.total} students from Classroom.`);
+      } }, c.classroomId ? 'Sync from Classroom again' : 'Load my Classroom classes');
+      classroom = h('div', { class: 'row tight' }, h('span', { class: 'small muted', text: 'Google Classroom:' }), c.classroomId ? null : pick, loadBtn);
+    }
 
+    const studentRow = (s) =>
+      h(
+        'tr',
+        { class: s.status === 'pending' ? 'row-alert' : '' },
+        h('td', {}, h('strong', { text: s.name }), h('div', { class: 'muted small' }, s.email, ' · ', h('a', { href: `#studentview/${encodeURIComponent(s.id)}` }, '👁 what they see'))),
+        s.status === 'pending'
+          ? h('td', { colspan: 3 }, h('span', { class: 'badge badge-warn', text: 'Asked to join' }), ' ', h('button', { class: 'btn btn-primary', onclick: () => act(() => api('POST', `/api/classes/${c.id}/students/${encodeURIComponent(s.id)}/approve`), `${s.name} approved.`) }, 'Approve'))
+          : [
+              h('td', {}, h('input', { type: 'checkbox', checked: s.readAloud, 'aria-label': 'Read-aloud', onchange: (e) => update(s, { readAloud: e.target.checked }) })),
+              h('td', {}, h('input', { type: 'checkbox', checked: s.voiceAnswers, 'aria-label': 'Voice answers', onchange: (e) => update(s, { voiceAnswers: e.target.checked }) })),
+              h('td', {}, h('select', { 'aria-label': 'Extra time', onchange: (e) => update(s, { extraTimePct: Number(e.target.value) }) }, [0, 25, 33, 50, 100].map((x) => h('option', { value: x, selected: x === s.extraTimePct }, x ? `+${x}%` : 'none')))),
+            ],
+        h('td', {}, h('button', { class: 'btn btn-ghost danger', onclick: () => act(() => api('DELETE', `/api/classes/${c.id}/students/${encodeURIComponent(s.id)}`), `${s.name} removed from ${c.name}.`) }, s.status === 'pending' ? 'Decline' : 'Remove')),
+      );
+
+    return h(
+      'details',
+      { class: 'card class-card', open: classes.length <= 2 || pending.length > 0 },
+      h('summary', {}, h('strong', { text: c.name }), h('span', { class: 'muted', text: ` · ${active.length} student${active.length === 1 ? '' : 's'}` }), pending.length ? h('span', { class: 'badge badge-warn', text: `${pending.length} waiting` }) : null, c.ownerId !== BOOT.user.id ? h('span', { class: 'muted small', text: ` · ${c.ownerId}` }) : null),
+      h('div', { class: 'form' },
+        h('div', { class: 'row' }, name, h('button', { class: 'btn btn-ghost danger', onclick: () =>
+          modal(`Delete the class ${c.name}?`, h('p', { text: 'Students stay in the system with their results; they’re just no longer in this class.' }), [
+            ['Cancel', null],
+            ['Delete class', () => act(() => api('DELETE', `/api/classes/${c.id}`), 'Class deleted.'), 'btn-danger'],
+          ]) }, 'Delete class')),
+        join,
+        classroom,
+        c.students.length
+          ? h('table', { class: 'table' }, h('thead', {}, h('tr', {}, ['Student', 'Read-aloud', 'Voice answers', 'Extra time', ''].map((x) => h('th', { text: x })))), h('tbody', {}, [...pending, ...active].map(studentRow)))
+          : h('p', { class: 'muted', text: 'No students yet: share the class code, import from Classroom, or add by email.' }),
+        addByEmail,
+      ),
+    );
+  }
+
+  const newName = h('input', { placeholder: 'e.g. 10-3 English', class: 'grow' });
   page(
-    h('div', { class: 'page-head' }, h('h1', { text: 'Students' }), filterSel),
-    students.length
-      ? h(
-          'table',
-          { class: 'table' },
-          h('thead', {}, h('tr', {}, ['Name', 'Class', 'Read-aloud', 'Voice answers', 'Extra time', ''].map((x) => h('th', { text: x })))),
-          tbody,
-        )
-      : h('p', { class: 'muted', text: 'No students yet. Add them below.' }),
+    h('div', { class: 'page-head' }, h('h1', { text: 'Classes' })),
+    h('div', { class: 'card row' }, newName, h('button', { class: 'btn btn-primary', onclick: () => newName.value.trim() ? act(() => api('POST', '/api/classes', { name: newName.value }), 'Class created.') : toast('Give the class a name.', 'warn') }, '+ New class')),
+    classroomNeedsSetup ? h('p', { class: 'small muted', text: 'Google Classroom import is off. To turn it on, update the app’s manifest as described in the update instructions.' }) : null,
+    classes.length ? classes.map(classCard) : h('p', { class: 'muted', text: 'No classes yet. Create one above.' }),
+  );
+}
+
+// ================================================================== teachers
+
+async function teachersPage() {
+  const { teachers } = await api('GET', '/api/teachers');
+  const email = h('input', { type: 'email', placeholder: 'colleague@school.org', class: 'grow' });
+  const shareBox = h('div');
+  page(
+    h('div', { class: 'page-head' }, h('h1', { text: 'Teachers' })),
+    h('p', { class: 'muted', text: 'Teachers at your school can use this app with their own classes, tests and students. They only see their own; you (the admin) see everything.' }),
+    h(
+      'table',
+      { class: 'table' },
+      h('thead', {}, h('tr', {}, ['Teacher', 'Classes', 'Tests', ''].map((x) => h('th', { text: x })))),
+      h('tbody', {}, teachers.map((t) =>
+        h('tr', {}, h('td', {}, h('strong', { text: t.email }), t.admin ? h('span', { class: 'badge', text: 'admin' }) : null), h('td', { text: t.classes }), h('td', { text: t.tests }),
+          h('td', {}, t.admin ? null : h('button', { class: 'btn btn-ghost danger', onclick: async () => {
+            try { await api('DELETE', `/api/teachers/${encodeURIComponent(t.id)}`); route(); } catch (e) { toast(e.message, 'error'); }
+          } }, 'Remove')),
+        ),
+      )),
+    ),
+    h('div', { class: 'card row' }, email, h('button', { class: 'btn btn-primary', onclick: async () => {
+      try {
+        await api('POST', '/api/teachers', { email: email.value });
+        toast('Added. Send them the app link: they open it and see their own empty Tests page.', 'ok');
+        route();
+      } catch (e) {
+        toast(e.message, 'error');
+      }
+    } }, 'Add teacher')),
     h(
       'div',
       { class: 'card form' },
-      h('h2', { text: 'Add students' }),
-      h('p', { class: 'muted', text: 'Students sign in with their school Google account, so there are no passwords. Paste one per line: school email, name, class. Adding an email that is already on the list updates its name and class.' }),
-      h('label', {}, 'email, name, class', bulk),
-      h('div', { class: 'row end' }, h('button', { class: 'btn btn-primary', onclick: addStudents }, 'Add students')),
+      h('h2', { text: 'A teacher at another school' }),
+      h('p', { text: 'Google only tells this app the email of people at your school, so teachers elsewhere need their own copy. This makes a copy of the app without any of your data, with a link they can use to install it (about 5 minutes, no code).' }),
+      h('div', {}, h('button', { class: 'btn', onclick: async (e) => {
+        e.target.disabled = true;
+        e.target.textContent = 'Making a copy…';
+        try {
+          const r = await api('POST', '/api/admin/install-copy');
+          clear(
+            shareBox,
+            h('p', {}, 'Send them this link: ', h('a', { href: r.copyLink, target: '_blank', rel: 'noopener', text: r.copyLink })),
+            r.sharing === 'anyone' ? null : h('p', { class: 'error', text: r.sharing === 'school' ? 'Your school only allows sharing inside the school, so this link works for teachers here only. To share outside, open the file and change its sharing (if your school allows it).' : 'The copy could not be shared automatically. Open it and share it with "Anyone with the link".' }),
+            h('p', { class: 'small muted' }, 'The copy is in your Google Drive: ', h('a', { href: r.fileUrl, target: '_blank', rel: 'noopener' }, 'open it'), '. Its first tab has the setup steps.'),
+          );
+        } catch (err) {
+          toast(err.message, 'error');
+        }
+        e.target.disabled = false;
+        e.target.textContent = 'Make an installable copy';
+      } }, 'Make an installable copy')),
+      shareBox,
     ),
+  );
+}
+
+// ================================================================== settings
+
+async function settingsPage() {
+  const settings = await api('GET', '/api/settings');
+  const recorderUrl = h('input', { value: settings.recorderUrl, class: 'grow' });
+  page(
+    h('div', { class: 'page-head' }, h('h1', { text: 'Settings' })),
     h(
-      'details',
+      'div',
       { class: 'card form' },
-      h('summary', { class: 'strong', text: `Teachers (${teachers.length})` }),
-      h('p', { class: 'muted', text: 'Every teacher can see and grade all tests and students.' }),
-      h(
-        'ul',
-        {},
-        teachers.map((t) =>
-          h(
-            'li',
-            {},
-            t.email,
-            t.owner
-              ? h('span', { class: 'muted', text: ' (owner)' })
-              : h('button', { class: 'btn btn-ghost danger', onclick: async () => (await api('DELETE', `/api/teachers/${encodeURIComponent(t.id)}`), route()) }, 'Remove'),
-          ),
-        ),
-      ),
-      h(
-        'div',
-        { class: 'row' },
-        teacherEmail,
-        h('button', {
-          class: 'btn',
-          onclick: async () => {
-            try {
-              await api('POST', '/api/teachers', { email: teacherEmail.value });
-              route();
-            } catch (e) {
-              toast(e.message, 'error');
-            }
-          },
-        }, 'Add teacher'),
-      ),
-    ),
-    h(
-      'details',
-      { class: 'card form' },
-      h('summary', { class: 'strong', text: 'Settings' }),
       h(
         'p',
         {},
@@ -882,32 +1034,23 @@ async function peoplePage() {
         settings.recordingsUrl ? ' and voice answers in ' : '. ',
         settings.recordingsUrl ? h('a', { href: settings.recordingsUrl, target: '_blank', rel: 'noopener' }, 'this Drive folder') : null,
         settings.recordingsUrl ? '. ' : null,
-        'Don’t rename or reorder the sheet’s columns.',
+        'Don’t rename or delete the sheet’s tabs or column headings.',
       ),
-      settings.recordingsUrl
-        ? null
-        : h('p', { class: 'error', text: 'Voice answers are not set up: the app has no permission to use Google Drive. In the Apps Script editor, choose "authorize" in the function list at the top, click Run, and tick every box.' }),
+      settings.recordingsUrl ? null : h('p', { class: 'error', text: 'Voice answers are not set up: the app has no permission to use Google Drive. In the Apps Script editor, choose "authorize" in the function list at the top, click Run, and tick every box.' }),
+      h('p', {}, 'Google Classroom import: ', h('strong', { text: settings.classroomEnabled ? 'on' : 'off' }), settings.classroomEnabled ? '' : ' (update the app’s manifest to turn it on, as in the update instructions).'),
       h('label', {}, 'Voice recorder page (the pop-up students record in)', recorderUrl),
-      h(
-        'div',
-        { class: 'row end' },
-        h('button', {
-          class: 'btn',
-          onclick: async () => {
-            try {
-              const r = await api('PUT', '/api/settings', { recorderUrl: recorderUrl.value });
-              BOOT.recorderUrl = r.recorderUrl;
-              recorderUrl.value = r.recorderUrl;
-              toast('Saved.', 'ok');
-            } catch (e) {
-              toast(e.message, 'error');
-            }
-          },
-        }, 'Save'),
-      ),
+      h('div', { class: 'row end' }, h('button', { class: 'btn', onclick: async () => {
+        try {
+          const r = await api('PUT', '/api/settings', { recorderUrl: recorderUrl.value });
+          BOOT.recorderUrl = r.recorderUrl;
+          recorderUrl.value = r.recorderUrl;
+          toast('Saved.', 'ok');
+        } catch (e) {
+          toast(e.message, 'error');
+        }
+      } }, 'Save')),
     ),
   );
-  draw();
 }
 
 // ============================================================ student view
@@ -955,7 +1098,7 @@ async function studentHomePage(studentId) {
       h('strong', { text: '👁 Student view' }),
       h('span', {}, 'This is the page ', h('strong', { text: s.name }), ' sees when they open the app.'),
       h('span', { class: 'muted', text: [s.readAloud && 'read-aloud', s.voiceAnswers && 'voice answers', s.extraTimePct && `+${s.extraTimePct}% time`].filter(Boolean).join(' · ') || 'no accommodations' }),
-      h('a', { class: 'btn btn-ghost', href: '#people' }, '✕ Close'),
+      h('a', { class: 'btn btn-ghost', href: '#classes' }, '✕ Close'),
     ),
     h('h1', { text: `Hi ${s.name}` }),
     tests.length
@@ -991,7 +1134,9 @@ App.teacherRoute = async function (name, arg, rest) {
     else if (name === 'edit') await editorPage(arg);
     else if (name === 'results') await resultsPage(arg);
     else if (name === 'grade') await gradePage(arg);
-    else if (name === 'people') await peoplePage();
+    else if (name === 'classes' || name === 'people') await classesPage();
+    else if (name === 'teachers') await teachersPage();
+    else if (name === 'settings') await settingsPage();
     else await testsPage();
   } catch (e) {
     page(h('p', { class: 'error', text: e.message }));

@@ -29,9 +29,22 @@ function spreadsheet_() {
   return ss;
 }
 
+// Settings are stored per spreadsheet, so a copy of this Sheet (with its
+// script) never writes into the original's recordings folder.
+function propKey_(name) {
+  return name + ':' + spreadsheet_().getId();
+}
+
 function recordingsFolder_() {
   const props = PropertiesService.getScriptProperties();
-  const id = props.getProperty('RECORDINGS_FOLDER_ID');
+  let id = props.getProperty(propKey_('RECORDINGS_FOLDER_ID'));
+  // Upgrade from the version that stored one folder per script.
+  const legacy = props.getProperty('RECORDINGS_FOLDER_ID');
+  if (!id && legacy) {
+    id = legacy;
+    props.setProperty(propKey_('RECORDINGS_FOLDER_ID'), legacy);
+    props.deleteProperty('RECORDINGS_FOLDER_ID');
+  }
   if (id) {
     try {
       return DriveApp.getFolderById(id);
@@ -46,7 +59,7 @@ function recordingsFolder_() {
     if (/permission/i.test(String(e && e.message))) throw new HttpError(503, DRIVE_PERMISSION_HELP);
     throw e;
   }
-  props.setProperty('RECORDINGS_FOLDER_ID', folder.getId());
+  props.setProperty(propKey_('RECORDINGS_FOLDER_ID'), folder.getId());
   return folder;
 }
 
@@ -81,10 +94,102 @@ function withLock_(fn) {
   }
 }
 
+// Google Classroom, when its service is on (the manifest turns it on). Runs as
+// the person who set up the app, so it sees their Classroom classes.
+function classroom_() {
+  if (typeof Classroom === 'undefined') return undefined;
+  const call = (fn) => {
+    try {
+      return fn();
+    } catch (e) {
+      throw new HttpError(502, 'Google Classroom said: ' + (e && e.message) + ' ' + CLASSROOM_SETUP_HELP);
+    }
+  };
+  return {
+    courses() {
+      return call(() => {
+        const out = [];
+        let pageToken;
+        do {
+          const r = Classroom.Courses.list({ teacherId: 'me', courseStates: ['ACTIVE'], pageSize: 100, pageToken });
+          (r.courses || []).forEach((c) => out.push({ id: c.id, name: c.name, section: c.section || '' }));
+          pageToken = r.nextPageToken;
+        } while (pageToken);
+        return out;
+      });
+    },
+    students(courseId) {
+      return call(() => {
+        const out = [];
+        let pageToken;
+        do {
+          const r = Classroom.Courses.Students.list(courseId, { pageSize: 100, pageToken });
+          (r.students || []).forEach((st) =>
+            out.push({ email: (st.profile && st.profile.emailAddress) || '', name: (st.profile && st.profile.name && st.profile.name.fullName) || '' }),
+          );
+          pageToken = r.nextPageToken;
+        } while (pageToken);
+        return out;
+      });
+    },
+  };
+}
+
+const CLASSROOM_SETUP_HELP =
+  'To use Classroom import, the app’s manifest (appsscript.json) must be the one from the update instructions, then run "authorize" once and allow every permission.';
+
+// Teachers at another school can't use this copy (Google only shares emails
+// within a school), so they get their own: a copy of this Sheet without the
+// data, which carries the app's code with it.
+const DATA_TABS = Object.keys(SCHEMAS);
+function makeInstallCopy_() {
+  recordingsFolder_(); // settle this copy's own settings before copying
+  const ss = spreadsheet_();
+  const file = DriveApp.getFileById(ss.getId()).makeCopy('Online Tests (installable copy)');
+  const copy = SpreadsheetApp.openById(file.getId());
+  const start = copy.insertSheet('Start here', 0);
+  start.getRange(1, 1, INSTALL_STEPS.length, 1).setValues(INSTALL_STEPS.map((x) => [x]));
+  start.getRange(1, 1).setFontWeight('bold').setFontSize(14);
+  start.setColumnWidth(1, 900);
+  for (const sh of copy.getSheets()) {
+    const name = sh.getName();
+    if (DATA_TABS.includes(name) || name.indexOf('Results: ') === 0) copy.deleteSheet(sh);
+  }
+  let sharing = 'anyone';
+  try {
+    file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+  } catch (e) {
+    try {
+      file.setSharing(DriveApp.Access.DOMAIN_WITH_LINK, DriveApp.Permission.VIEW);
+      sharing = 'school';
+    } catch (e2) {
+      sharing = 'none';
+    }
+  }
+  return { copyLink: 'https://docs.google.com/spreadsheets/d/' + file.getId() + '/copy', fileUrl: file.getUrl(), sharing };
+}
+
+const INSTALL_STEPS = [
+  'Online Tests: set up your own copy (about 5 minutes)',
+  '',
+  'You made a copy of this Sheet, so the app is already inside it. Do this once, signed in with your school Google account:',
+  '',
+  '1. In the menu above, click Extensions → Apps Script. A code editor opens.',
+  '2. At the top, choose "authorize" in the list next to ▷ Run, then click ▷ Run. Allow everything Google asks for (tick every box).',
+  '3. Click the blue Deploy button → New deployment. Click the gear ⚙ next to "Select type" and choose Web app.',
+  '4. Set "Execute as" to Me, and "Who has access" to Anyone within your school. Click Deploy.',
+  '5. Copy the Web app URL. That is the link to your app: open it to start, and give it to your students.',
+  '',
+  'Your students, tests and results will be stored in this Sheet (new tabs appear by themselves). Keep this file.',
+  'Help and updates: https://github.com/avbitran/Lesson-Plans',
+];
+
 function env_(db) {
   return {
     db,
     ownerEmail: Session.getEffectiveUser().getEmail().toLowerCase(),
+    classroom: classroom_(),
+    makeInstallCopy: makeInstallCopy_,
     withLock: withLock_,
     files: {
       save(name, mime, base64) {
@@ -119,6 +224,7 @@ function env_(db) {
         return {
           recorderUrl: p.getProperty('RECORDER_URL') || DEFAULT_RECORDER_URL,
           spreadsheetUrl: spreadsheet_().getUrl(),
+          classroomEnabled: typeof Classroom !== 'undefined',
           recordingsUrl: (() => {
             try {
               return recordingsFolder_().getUrl();
@@ -139,27 +245,42 @@ function env_(db) {
 
 // Who is visiting. Works because the app runs as the teacher and is shared
 // with "anyone in the school": Google then tells us the visitor's email.
+// Anyone not yet on a list is a guest, who can join a class with its code.
 function currentUser_(db, ownerEmail) {
   const email = String(Session.getActiveUser().getEmail() || '').toLowerCase();
   if (!email) return { role: null, email: '' };
-  if (email === ownerEmail || db.get('teachers', email)) return { id: email, email, role: 'teacher', name: email.split('@')[0] };
+  if (email === ownerEmail) return { id: email, email, role: 'teacher', admin: true, name: email.split('@')[0] };
+  const t = db.get('teachers', email);
+  if (t) return { id: email, email, role: 'teacher', admin: false, name: t.name || email.split('@')[0] };
   const s = db.get('students', email);
-  if (!s) return { role: null, email };
+  if (!s) return { id: email, email, role: 'guest' };
   return {
     id: email,
     email,
     role: 'student',
     name: s.name,
-    className: s.className,
     readAloud: !!s.readAloud,
     voiceAnswers: !!s.voiceAnswers,
     extraTimePct: s.extraTimePct || 0,
   };
 }
 
+// The one-time upgrade from the single-teacher version (see Api.migrate).
+const SCHEMA_VERSION = '2';
+function migrateOnce_(db, env) {
+  const props = PropertiesService.getScriptProperties();
+  if (props.getProperty(propKey_('SCHEMA_VERSION')) === SCHEMA_VERSION) return;
+  withLock_(() => {
+    if (props.getProperty(propKey_('SCHEMA_VERSION')) === SCHEMA_VERSION) return;
+    createApi(env).migrate();
+    props.setProperty(propKey_('SCHEMA_VERSION'), SCHEMA_VERSION);
+  });
+}
+
 function bootInfo() {
   const db = new SheetStore(spreadsheet_());
   const env = env_(db);
+  migrateOnce_(db, env);
   const user = currentUser_(db, env.ownerEmail);
   return {
     user,
@@ -173,6 +294,7 @@ function rpc(method, path, body) {
   try {
     const db = new SheetStore(spreadsheet_());
     const env = env_(db);
+    migrateOnce_(db, env);
     const user = currentUser_(db, env.ownerEmail);
     const api = createApi(env);
     // Teacher edits are rare; serialising them avoids row shifts mid-write.

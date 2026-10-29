@@ -93,11 +93,101 @@ function createApi(env) {
   }
 
   const canRecord = (user, test) => !!user.voiceAnswers || test.settings.recordingForAll;
-  const sameClass = (test, className) => {
-    const classes = test.classes.map((c) => c.toLowerCase());
-    return classes.length === 0 || classes.includes(String(className || '').toLowerCase());
-  };
-  const testVisibleTo = (t, user) => t.status === 'open' && sameClass(t.data, user.className);
+
+  // --- who may see what. The admin (whoever set up the app) sees everything;
+  // every other teacher sees their own classes, tests and those students.
+  const isAdmin = (user) => user.role === 'teacher' && !!user.admin;
+  const ownsTest = (user, t) => isAdmin(user) || t.ownerId === user.id;
+  const classesOf = (user) => db.all('classes').filter((c) => isAdmin(user) || c.ownerId === user.id);
+
+  function myTest(user, id) {
+    const t = getTest(id);
+    if (!ownsTest(user, t)) throw new HttpError(404, 'Test not found.');
+    return t;
+  }
+
+  function myClass(user, id) {
+    const c = db.get('classes', String(id));
+    if (!c || !(isAdmin(user) || c.ownerId === user.id)) throw new HttpError(404, 'Class not found.');
+    return c;
+  }
+
+  function myAttempt(user, id) {
+    const a = getAttempt(id);
+    const t = db.get('tests', a.testId);
+    if (!isAdmin(user) && (!t || t.ownerId !== user.id)) throw new HttpError(404, 'Attempt not found.');
+    return a;
+  }
+
+  // Students in any of this teacher's classes (joined or waiting for approval).
+  function teacherCanSeeStudent(user, studentId) {
+    if (isAdmin(user)) return true;
+    const mine = new Set(classesOf(user).map((c) => c.id));
+    return db.all('members').some((m) => m.studentId === studentId && mine.has(m.classId));
+  }
+
+  const activeClassIds = (studentId) =>
+    new Set(db.all('members').filter((m) => m.studentId === studentId && m.status === 'active').map((m) => m.classId));
+
+  // The classes a test is for: the ones picked, or all of its owner's classes.
+  function testClassIds(t) {
+    const picked = (t.data.classIds || []).filter(Boolean);
+    if (picked.length) return new Set(picked);
+    return new Set(db.all('classes').filter((c) => c.ownerId === t.ownerId).map((c) => c.id));
+  }
+
+  function testVisibleTo(t, user, studentClasses) {
+    if (t.status !== 'open') return false;
+    const mine = studentClasses || activeClassIds(user.id);
+    for (const id of testClassIds(t)) if (mine.has(id)) return true;
+    return false;
+  }
+
+  // Join codes are short, unambiguous and case-insensitive: ENG-4821.
+  const normalizeCode = (code) => String(code || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  function newJoinCode(name) {
+    const prefix = (String(name || '').toUpperCase().replace(/[^A-Z]/g, '').slice(0, 3) || 'CLS').padEnd(3, 'X');
+    const taken = new Set(db.all('classes').map((c) => normalizeCode(c.joinCode)));
+    for (;;) {
+      const code = `${prefix}-${Math.floor(1000 + Math.random() * 9000)}`;
+      if (!taken.has(normalizeCode(code))) return code;
+    }
+  }
+
+  function addMember(classId, studentId, status) {
+    const existing = db.all('members').find((m) => m.classId === classId && m.studentId === studentId);
+    if (existing) {
+      if (existing.status !== status && status === 'active') db.update('members', existing.id, { status: 'active' });
+      return existing.status === 'active' ? 'active' : status;
+    }
+    db.insert('members', { classId, studentId, status, addedAt: now() });
+    return status;
+  }
+
+  function ensureStudent(email, name) {
+    const s = db.get('students', email);
+    if (s) return s;
+    return db.insert('students', {
+      id: email,
+      name: String(name || '').trim().slice(0, 100) || email.split('@')[0],
+      className: '',
+      readAloud: false,
+      voiceAnswers: false,
+      extraTimePct: 0,
+      createdAt: now(),
+    });
+  }
+
+  function classNamesFor(studentId, user) {
+    const classes = new Map(db.all('classes').map((c) => [c.id, c]));
+    return db
+      .all('members')
+      .filter((m) => m.studentId === studentId && classes.has(m.classId))
+      .map((m) => classes.get(m.classId))
+      .filter((c) => !user || isAdmin(user) || c.ownerId === user.id)
+      .map((c) => c.name)
+      .join(', ');
+  }
 
   function sanitizeAnswers(test, input) {
     const out = {};
@@ -105,6 +195,11 @@ function createApi(env) {
     for (const q of test.questions) {
       if (q.type === 'section' || !(q.id in input)) continue;
       const v = input[q.id];
+      if (q.type === 'match') {
+        // One pick per definition: an item number (0-based) or null.
+        if (Array.isArray(v)) out[q.id] = q.pairs.map((p, k) => (Number.isInteger(v[k]) && v[k] >= 0 && v[k] < q.items.length ? v[k] : null));
+        continue;
+      }
       const validOption = (x) => Number.isInteger(x) && x >= 0 && x < q.options.length;
       if (q.type === 'mc' && q.multiple) {
         const picks = Array.isArray(v) ? [...new Set(v.filter(validOption))] : [];
@@ -154,12 +249,12 @@ function createApi(env) {
   const cleanEmail = (s) => String(s || '').trim().toLowerCase();
   const isEmail = (s) => /^[^\s@,;]+@[^\s@,;]+\.[^\s@,;]+$/.test(s);
 
-  function publicStudent(s) {
+  function publicStudent(s, user) {
     return {
       id: s.id,
       email: s.id,
       name: s.name,
-      className: s.className || '',
+      className: classNamesFor(s.id, user),
       readAloud: !!s.readAloud,
       voiceAnswers: !!s.voiceAnswers,
       extraTimePct: s.extraTimePct || 0,
@@ -170,21 +265,64 @@ function createApi(env) {
 
   route('GET', '/api/me', null, (ctx) => ({ user: ctx.user }));
 
-  // ------------------------------------------------------ teacher: people
+  // ------------------------------------------------------ teacher: classes
 
-  route('GET', '/api/users', 'teacher', () => ({
-    students: db
-      .all('students')
-      .map(publicStudent)
-      .sort((a, b) => (a.className + a.name).localeCompare(b.className + b.name)),
-    teachers: [{ id: ownerEmail(), email: ownerEmail(), owner: true }].concat(
-      db.all('teachers').filter((t) => t.id !== ownerEmail()).map((t) => ({ id: t.id, email: t.id, owner: false })),
-    ),
-  }));
+  function classPayload(c, members, students) {
+    return {
+      id: c.id,
+      name: c.name,
+      ownerId: c.ownerId,
+      joinCode: c.joinCode,
+      joinMode: c.joinMode || 'off',
+      classroomId: c.classroomId || '',
+      students: members
+        .filter((m) => m.classId === c.id)
+        .map((m) => Object.assign(publicStudent(students.get(m.studentId) || { id: m.studentId, name: m.studentId }), { status: m.status, memberId: m.id }))
+        .sort((a, b) => (a.status === b.status ? a.name.localeCompare(b.name) : a.status === 'pending' ? -1 : 1)),
+    };
+  }
 
-  route('POST', '/api/students/bulk', 'teacher', ({ body }) => {
+  route('GET', '/api/classes', 'teacher', ({ user }) => {
+    const members = db.all('members');
+    const students = new Map(db.all('students').map((s) => [s.id, s]));
+    return {
+      classes: classesOf(user)
+        .sort((a, b) => a.name.localeCompare(b.name))
+        .map((c) => classPayload(c, members, students)),
+      classroomAvailable: !!env.classroom && user.id === ownerEmail(),
+      // The owner sees how to turn Classroom import on when it's off.
+      classroomNeedsSetup: !env.classroom && user.id === ownerEmail(),
+    };
+  });
+
+  route('POST', '/api/classes', 'teacher', ({ body, user }) => {
+    const name = String(body.name || '').trim().slice(0, 60);
+    if (!name) throw new HttpError(400, 'Give the class a name, for example "10-3 English".');
+    const c = db.insert('classes', { ownerId: user.id, name, joinCode: newJoinCode(name), joinMode: 'off', classroomId: '', createdAt: now() });
+    return { id: c.id };
+  });
+
+  route('PUT', '/api/classes/:id', 'teacher', ({ params, body, user }) => {
+    const c = myClass(user, params.id);
+    const patch = {};
+    if (body.name !== undefined) patch.name = String(body.name).trim().slice(0, 60) || c.name;
+    if (['off', 'open', 'approve'].includes(body.joinMode)) patch.joinMode = body.joinMode;
+    if (body.newCode) patch.joinCode = newJoinCode(patch.name || c.name);
+    db.update('classes', c.id, patch);
+    return { ok: true };
+  });
+
+  route('DELETE', '/api/classes/:id', 'teacher', ({ params, user }) => {
+    const c = myClass(user, params.id);
+    db.removeWhere('members', (m) => m.classId === c.id);
+    db.remove('classes', c.id);
+    return { ok: true };
+  });
+
+  route('POST', '/api/classes/:id/students', 'teacher', ({ params, body, user }) => {
+    const c = myClass(user, params.id);
     const people = Array.isArray(body.people) ? body.people.slice(0, 500) : [];
-    const added = [];
+    let added = 0;
     const skipped = [];
     for (const p of people) {
       const email = cleanEmail(p.email);
@@ -192,57 +330,137 @@ function createApi(env) {
         skipped.push(`${p.email || '(empty)'}: not an email address`);
         continue;
       }
-      const fields = {
-        name: String(p.name || '').trim().slice(0, 100) || email.split('@')[0],
-        className: String(p.className || '').trim().slice(0, 60),
-      };
-      if (db.get('students', email)) db.update('students', email, fields);
-      else db.insert('students', { id: email, readAloud: false, voiceAnswers: false, extraTimePct: 0, ...fields });
-      added.push(email);
+      const s = ensureStudent(email, p.name);
+      if (p.name && String(p.name).trim() && s.name === email.split('@')[0]) db.update('students', email, { name: String(p.name).trim().slice(0, 100) });
+      addMember(c.id, email, 'active');
+      added++;
     }
-    return { added: added.length, skipped };
+    return { added, skipped };
   });
 
-  route('PUT', '/api/students/:id', 'teacher', ({ params, body }) => {
+  route('POST', '/api/classes/:id/students/:sid/approve', 'teacher', ({ params, user }) => {
+    const c = myClass(user, params.id);
+    const m = db.all('members').find((x) => x.classId === c.id && x.studentId === params.sid);
+    if (!m) throw new HttpError(404, 'Student not found in this class.');
+    db.update('members', m.id, { status: 'active' });
+    return { ok: true };
+  });
+
+  route('DELETE', '/api/classes/:id/students/:sid', 'teacher', ({ params, user }) => {
+    const c = myClass(user, params.id);
+    db.removeWhere('members', (m) => m.classId === c.id && m.studentId === params.sid);
+    return { ok: true };
+  });
+
+  // Google Classroom: only the person who set up the app can import, because
+  // Google runs the app with their account and sees their Classroom.
+  route('GET', '/api/classroom/courses', 'teacher', ({ user }) => {
+    if (!env.classroom || user.id !== ownerEmail()) throw new HttpError(403, CLASSROOM_OWNER_ONLY);
+    return { courses: env.classroom.courses() };
+  });
+
+  route('POST', '/api/classes/:id/classroom', 'teacher', ({ params, body, user }) => {
+    if (!env.classroom || user.id !== ownerEmail()) throw new HttpError(403, CLASSROOM_OWNER_ONLY);
+    const c = myClass(user, params.id);
+    const courseId = String(body.courseId || c.classroomId || '');
+    if (!courseId) throw new HttpError(400, 'Choose a Classroom class.');
+    const roster = env.classroom.students(courseId);
+    if (roster.length && roster.every((p) => !p.email)) throw new HttpError(403, CLASSROOM_NO_EMAILS);
+    let added = 0;
+    const skipped = [];
+    for (const p of roster) {
+      const email = cleanEmail(p.email);
+      if (!isEmail(email)) {
+        skipped.push(`${p.name || 'A student'}: Classroom did not share their email`);
+        continue;
+      }
+      ensureStudent(email, p.name);
+      if (addMember(c.id, email, 'active')) added++;
+    }
+    db.update('classes', c.id, { classroomId: courseId });
+    return { added, skipped, total: roster.length };
+  });
+
+  route('PUT', '/api/students/:id', 'teacher', ({ params, body, user }) => {
     const s = db.get('students', params.id);
-    if (!s) throw new HttpError(404, 'Student not found.');
+    if (!s || !teacherCanSeeStudent(user, s.id)) throw new HttpError(404, 'Student not found.');
     const patch = {};
     if (body.name !== undefined) patch.name = String(body.name).trim().slice(0, 100) || s.name;
-    if (body.className !== undefined) patch.className = String(body.className).trim().slice(0, 60);
     if (body.readAloud !== undefined) patch.readAloud = !!body.readAloud;
     if (body.voiceAnswers !== undefined) patch.voiceAnswers = !!body.voiceAnswers;
     if (body.extraTimePct !== undefined) patch.extraTimePct = Math.min(200, Math.max(0, parseInt(body.extraTimePct, 10) || 0));
     db.update('students', s.id, patch);
-    return { student: publicStudent(db.get('students', s.id)) };
+    return { student: publicStudent(db.get('students', s.id), user) };
   });
 
-  route('DELETE', '/api/students/:id', 'teacher', ({ params }) => {
+  // Deleting a student (and all their work) is for the admin; teachers
+  // remove students from their classes instead.
+  route('DELETE', '/api/students/:id', 'teacher', ({ params, user }) => {
+    if (!isAdmin(user)) throw new HttpError(403, 'Only the admin can delete a student. Remove them from your class instead.');
     for (const a of db.all('attempts', true).filter((x) => x.studentId === params.id)) removeAttempt(a);
+    db.removeWhere('members', (m) => m.studentId === params.id);
     db.remove('students', params.id);
     return { ok: true };
   });
 
-  route('POST', '/api/teachers', 'teacher', ({ body }) => {
+  // ------------------------------------------------------- admin: sharing
+
+  route('POST', '/api/admin/install-copy', 'teacher', ({ user }) => {
+    if (!isAdmin(user)) throw new HttpError(403, 'Only the admin can make an installable copy.');
+    return env.makeInstallCopy();
+  });
+
+  // ------------------------------------------------------- admin: teachers
+
+  route('GET', '/api/teachers', 'teacher', ({ user }) => {
+    if (!isAdmin(user)) throw new HttpError(403, 'Only the admin manages teachers.');
+    const classes = db.all('classes');
+    const tests = db.all('tests', true);
+    const row = (email, admin, name) => ({
+      id: email,
+      email,
+      name: name || '',
+      admin,
+      classes: classes.filter((c) => c.ownerId === email).length,
+      tests: tests.filter((t) => t.ownerId === email).length,
+    });
+    return {
+      teachers: [row(ownerEmail(), true)].concat(db.all('teachers').filter((t) => t.id !== ownerEmail()).map((t) => row(t.id, false, t.name))),
+    };
+  });
+
+  route('POST', '/api/teachers', 'teacher', ({ body, user }) => {
+    if (!isAdmin(user)) throw new HttpError(403, 'Only the admin manages teachers.');
     const email = cleanEmail(body.email);
     if (!isEmail(email)) throw new HttpError(400, 'Enter an email address.');
-    if (email !== ownerEmail() && !db.get('teachers', email)) db.insert('teachers', { id: email });
+    if (email !== ownerEmail() && !db.get('teachers', email)) db.insert('teachers', { id: email, name: String(body.name || '').trim().slice(0, 100), addedAt: now() });
     return { ok: true };
   });
 
-  route('DELETE', '/api/teachers/:id', 'teacher', ({ params }) => {
-    if (params.id === ownerEmail()) throw new HttpError(400, 'The owner of the app is always a teacher.');
+  route('DELETE', '/api/teachers/:id', 'teacher', ({ params, user }) => {
+    if (!isAdmin(user)) throw new HttpError(403, 'Only the admin manages teachers.');
+    if (params.id === ownerEmail()) throw new HttpError(400, 'The person who set up the app is always the admin.');
     db.remove('teachers', params.id);
     return { ok: true };
   });
 
   // ------------------------------------------------------- teacher: tests
 
-  route('GET', '/api/tests', 'teacher', () => {
+  // Only class ids this teacher owns may be put on a test.
+  function cleanClassIds(user, data) {
+    const mine = new Set(classesOf(user).map((c) => c.id));
+    data.classIds = (data.classIds || []).filter((id) => mine.has(id));
+    return data;
+  }
+
+  route('GET', '/api/tests', 'teacher', ({ user }) => {
     sweepExpired(db.all('attempts', true));
     const fresh = db.all('attempts', true);
+    const classNames = new Map(db.all('classes').map((c) => [c.id, c.name]));
     return {
       tests: db
         .all('tests')
+        .filter((t) => ownsTest(user, t))
         .sort((a, b) => b.updatedAt - a.updatedAt)
         .map((t) => {
           const mine = fresh.filter((a) => a.testId === t.id);
@@ -251,7 +469,8 @@ function createApi(env) {
             title: t.title,
             status: t.status,
             updatedAt: t.updatedAt,
-            classes: t.data.classes,
+            ownerId: t.ownerId,
+            classes: (t.data.classIds || []).map((id) => classNames.get(id)).filter(Boolean),
             questionCount: t.data.questions.filter((q) => q.type !== 'section').length,
             active: mine.filter((a) => a.status === 'in_progress' || a.status === 'locked').length,
             toGrade: mine.filter((a) => a.status === 'submitted').length,
@@ -262,49 +481,61 @@ function createApi(env) {
   });
 
   route('POST', '/api/tests', 'teacher', ({ body, user }) => {
-    const data = normalizeTest(body.data);
+    const data = cleanClassIds(user, normalizeTest(body.data));
     const t = db.insert('tests', { ownerId: user.id, title: data.title, status: 'draft', data, updatedAt: now() });
     return { id: t.id };
   });
 
-  route('GET', '/api/tests/:id', 'teacher', ({ params }) => {
-    const t = getTest(params.id);
-    return { id: t.id, status: t.status, data: t.data };
+  route('GET', '/api/tests/:id', 'teacher', ({ params, user }) => {
+    const t = myTest(user, params.id);
+    return { id: t.id, status: t.status, data: t.data, ownerId: t.ownerId };
   });
 
-  route('PUT', '/api/tests/:id', 'teacher', ({ params, body }) => {
-    const t = getTest(params.id);
-    const data = body.data !== undefined ? normalizeTest(body.data) : t.data;
+  route('PUT', '/api/tests/:id', 'teacher', ({ params, body, user }) => {
+    const t = myTest(user, params.id);
+    // The owner's classes decide who may be picked, even when the admin edits.
+    const owner = t.ownerId === user.id ? user : { id: t.ownerId, role: 'teacher' };
+    const data = body.data !== undefined ? cleanClassIds(owner, normalizeTest(body.data)) : t.data;
     const status = ['draft', 'open', 'closed'].includes(body.status) ? body.status : t.status;
     db.update('tests', t.id, { title: data.title, status, data, updatedAt: now() });
     return { id: t.id, status, data };
   });
 
   route('POST', '/api/tests/:id/duplicate', 'teacher', ({ params, user }) => {
-    const t = getTest(params.id);
-    const data = Object.assign({}, t.data, { title: `${t.data.title} (copy)`.slice(0, 200) });
+    const t = myTest(user, params.id);
+    const data = cleanClassIds(user, Object.assign({}, t.data, { title: `${t.data.title} (copy)`.slice(0, 200) }));
     const copy = db.insert('tests', { ownerId: user.id, title: data.title, status: 'draft', data, updatedAt: now() });
     return { id: copy.id };
   });
 
-  route('DELETE', '/api/tests/:id', 'teacher', ({ params }) => {
-    const t = getTest(params.id);
+  route('DELETE', '/api/tests/:id', 'teacher', ({ params, user }) => {
+    const t = myTest(user, params.id);
     for (const a of db.all('attempts', true).filter((x) => x.testId === t.id)) removeAttempt(a);
     db.remove('tests', t.id);
     return { ok: true };
   });
 
-  route('GET', '/api/tests/:id/preview', 'teacher', ({ params }) => ({ test: studentView(getTest(params.id).data) }));
+  route('GET', '/api/tests/:id/preview', 'teacher', ({ params, user }) => ({ test: studentView(myTest(user, params.id).data) }));
 
   function attemptRows(testId) {
     sweepExpired(db.all('attempts', true).filter((a) => a.testId === testId));
+    const t = getTest(testId);
+    const forTest = testClassIds(t);
+    const classById = new Map(db.all('classes').map((c) => [c.id, c.name]));
+    const members = db.all('members');
+    // The student's class(es) among the ones this test is for.
+    const classNames = (sid) =>
+      members
+        .filter((m) => m.studentId === sid && forTest.has(m.classId))
+        .map((m) => classById.get(m.classId))
+        .join(', ');
     const students = new Map(db.all('students').map((s) => [s.id, s]));
     const recs = db.all('recordings');
     return db
       .all('attempts')
       .filter((a) => a.testId === testId)
       .map((a) => {
-        const s = students.get(a.studentId) || { name: a.studentId, className: '' };
+        const s = students.get(a.studentId) || { name: a.studentId };
         const answers = a.answers || {};
         const grading = a.grading || {};
         const recorded = new Set(recs.filter((r) => r.attemptId === a.id).map((r) => r.questionId));
@@ -315,7 +546,7 @@ function createApi(env) {
           studentId: a.studentId,
           name: s.name,
           email: a.studentId,
-          className: s.className || '',
+          className: classNames(a.studentId),
           status: a.status,
           startedAt: a.startedAt,
           deadlineAt: a.deadlineAt,
@@ -332,20 +563,25 @@ function createApi(env) {
       .sort((x, y) => (x.className + x.name).localeCompare(y.className + y.name));
   }
 
-  route('GET', '/api/tests/:id/attempts', 'teacher', ({ params }) => {
-    const t = getTest(params.id);
+  route('GET', '/api/tests/:id/attempts', 'teacher', ({ params, user }) => {
+    const t = myTest(user, params.id);
     const attempts = attemptRows(t.id);
     const started = new Set(attempts.map((a) => a.studentId));
-    const notStarted = db
-      .all('students')
-      .filter((s) => !started.has(s.id) && sameClass(t.data, s.className))
-      .sort((a, b) => (a.className + a.name).localeCompare(b.className + b.name))
-      .map((s) => ({ id: s.id, name: s.name, className: s.className }));
+    const forTest = testClassIds(t);
+    const classById = new Map(db.all('classes').map((c) => [c.id, c.name]));
+    const students = new Map(db.all('students').map((s) => [s.id, s]));
+    const waiting = new Map();
+    for (const m of db.all('members')) {
+      if (m.status !== 'active' || !forTest.has(m.classId) || started.has(m.studentId) || waiting.has(m.studentId)) continue;
+      const s = students.get(m.studentId);
+      if (s) waiting.set(s.id, { id: s.id, name: s.name, className: classById.get(m.classId) || '' });
+    }
+    const notStarted = [...waiting.values()].sort((a, b) => (a.className + a.name).localeCompare(b.className + b.name));
     return { test: { id: t.id, title: t.title, status: t.status, data: t.data }, attempts, notStarted };
   });
 
-  route('POST', '/api/tests/:id/export', 'teacher', ({ params }) => {
-    const t = getTest(params.id);
+  route('POST', '/api/tests/:id/export', 'teacher', ({ params, user }) => {
+    const t = myTest(user, params.id);
     const iso = (ms) => (ms ? (env.formatTime ? env.formatTime(ms) : new Date(ms).toISOString().replace('T', ' ').slice(0, 16)) : '');
     const rows = [['Name', 'Email', 'Class', 'Status', 'Score', 'Max', 'Started', 'Submitted', 'Times left the test']];
     for (const a of attemptRows(t.id))
@@ -355,8 +591,8 @@ function createApi(env) {
 
   // ---------------------------------------------------- teacher: attempts
 
-  route('GET', '/api/attempts/:id', 'teacher', ({ params }) => {
-    const a = getAttempt(params.id);
+  route('GET', '/api/attempts/:id', 'teacher', ({ params, user }) => {
+    const a = myAttempt(user, params.id);
     const s = db.get('students', a.studentId) || { id: a.studentId, name: a.studentId };
     return {
       attempt: {
@@ -376,7 +612,7 @@ function createApi(env) {
       },
       test: a.snapshot,
       auto: autoGrade(a.snapshot, a.answers, recordedIds(a.id)),
-      student: publicStudent(s),
+      student: publicStudent(s, user),
       events: db
         .all('events')
         .filter((e) => e.attemptId === a.id)
@@ -386,8 +622,8 @@ function createApi(env) {
     };
   });
 
-  route('PUT', '/api/attempts/:id/grade', 'teacher', ({ params, body }) => {
-    const a = getAttempt(params.id);
+  route('PUT', '/api/attempts/:id/grade', 'teacher', ({ params, body, user }) => {
+    const a = myAttempt(user, params.id);
     if (a.status !== 'submitted' && a.status !== 'returned') throw new HttpError(409, 'The student has not submitted yet.');
     const grading = {};
     for (const q of a.snapshot.questions) {
@@ -412,8 +648,8 @@ function createApi(env) {
     return { score, status: ret ? 'returned' : 'submitted' };
   });
 
-  route('POST', '/api/attempts/:id/unlock', 'teacher', ({ params, body }) => {
-    const a = getAttempt(params.id);
+  route('POST', '/api/attempts/:id/unlock', 'teacher', ({ params, body, user }) => {
+    const a = myAttempt(user, params.id);
     if (a.status !== 'locked' && a.status !== 'in_progress') throw new HttpError(409, 'This test is already submitted.');
     const add = Math.min(240, Math.max(0, parseInt(body.addMinutes, 10) || 0));
     const deadline = a.deadlineAt ? Math.max(a.deadlineAt, now()) + add * 60e3 : null;
@@ -422,23 +658,24 @@ function createApi(env) {
     return { ok: true };
   });
 
-  route('POST', '/api/attempts/:id/force-submit', 'teacher', ({ params }) => {
-    const a = getAttempt(params.id);
+  route('POST', '/api/attempts/:id/force-submit', 'teacher', ({ params, user }) => {
+    const a = myAttempt(user, params.id);
     if (a.status !== 'locked' && a.status !== 'in_progress') throw new HttpError(409, 'This test is already submitted.');
     submitAttempt(a, 'teacher');
     return { ok: true };
   });
 
-  route('DELETE', '/api/attempts/:id', 'teacher', ({ params }) => {
-    removeAttempt(getAttempt(params.id));
+  route('DELETE', '/api/attempts/:id', 'teacher', ({ params, user }) => {
+    removeAttempt(myAttempt(user, params.id));
     return { ok: true };
   });
 
   // ------------------------------------------------------------ students
 
   // A student's home page: open tests for their class plus any they've started.
-  function homeTests(user) {
+  function homeTests(user, onlyOwner) {
     sweepExpired(db.all('attempts', true).filter((a) => a.studentId === user.id));
+    const studentClasses = activeClassIds(user.id);
     const attempts = new Map(
       db
         .all('attempts', true)
@@ -448,7 +685,8 @@ function createApi(env) {
     return {
       tests: db
         .all('tests')
-        .filter((t) => t.status !== 'draft' && (attempts.has(t.id) || testVisibleTo(t, user)))
+        .filter((t) => t.status !== 'draft' && (attempts.has(t.id) || testVisibleTo(t, user, studentClasses)))
+        .filter((t) => !onlyOwner || t.ownerId === onlyOwner)
         .sort((a, b) => b.updatedAt - a.updatedAt)
         .map((t) => {
           const a = attempts.get(t.id);
@@ -476,13 +714,38 @@ function createApi(env) {
     };
   }
 
-  route('GET', '/api/my/tests', 'student', ({ user }) => homeTests(user));
+  function myClassesPayload(studentId) {
+    const classes = new Map(db.all('classes').map((c) => [c.id, c]));
+    return db
+      .all('members')
+      .filter((m) => m.studentId === studentId && classes.has(m.classId))
+      .map((m) => ({ name: classes.get(m.classId).name, status: m.status }));
+  }
 
-  // The teacher's 👁 view of one student's home page.
-  route('GET', '/api/students/:id/home', 'teacher', ({ params }) => {
+  route('GET', '/api/my/tests', 'student', ({ user }) => Object.assign(homeTests(user), { classes: myClassesPayload(user.id) }));
+
+  // The teacher's 👁 view of one student's home page (only their own tests,
+  // unless they're the admin).
+  route('GET', '/api/students/:id/home', 'teacher', ({ params, user }) => {
     const s = db.get('students', params.id);
-    if (!s) throw new HttpError(404, 'Student not found.');
-    return Object.assign({ student: publicStudent(s) }, homeTests({ id: s.id, className: s.className, extraTimePct: s.extraTimePct || 0 }));
+    if (!s || !teacherCanSeeStudent(user, s.id)) throw new HttpError(404, 'Student not found.');
+    const home = homeTests({ id: s.id, extraTimePct: s.extraTimePct || 0 }, isAdmin(user) ? null : user.id);
+    return Object.assign({ student: publicStudent(s, user) }, home);
+  });
+
+  // A student (or someone not on any list yet) joins a class with its code.
+  route('POST', '/api/join', 'signed-in', ({ body, user }) => {
+    if (user.role === 'teacher') throw new HttpError(400, 'Teachers don’t join classes. Use a student account to try this.');
+    const code = normalizeCode(body.code);
+    const c = code && db.all('classes').find((x) => normalizeCode(x.joinCode) === code);
+    if (!c || (c.joinMode || 'off') === 'off') throw new HttpError(404, 'That class code doesn’t work. Check it with your teacher.');
+    const name = String(body.name || '').trim();
+    if (!db.get('students', user.email) && name.length < 2) throw new HttpError(400, 'Write your full name so your teacher knows who you are.');
+    return withLock(() => {
+      ensureStudent(user.email, name);
+      const status = addMember(c.id, user.email, c.joinMode === 'approve' ? 'pending' : 'active');
+      return { className: c.name, status };
+    });
   });
 
   // The rules shown before starting; does not start the clock.
@@ -644,7 +907,9 @@ function createApi(env) {
   route('GET', '/api/recordings/:id', 'any', ({ params, user }) => {
     const r = db.get('recordings', params.id);
     const a = r && db.get('attempts', r.attemptId);
-    if (!r || !a || (user.role !== 'teacher' && a.studentId !== user.id)) throw new HttpError(404, 'Recording not found.');
+    const t = a && db.get('tests', a.testId);
+    const allowed = a && (user.role === 'teacher' ? isAdmin(user) || (t && t.ownerId === user.id) : a.studentId === user.id);
+    if (!r || !allowed) throw new HttpError(404, 'Recording not found.');
     return { mime: r.mime, data: files.read(r.fileId) };
   });
 
@@ -652,7 +917,8 @@ function createApi(env) {
 
   route('GET', '/api/settings', 'teacher', () => env.settings.get());
 
-  route('PUT', '/api/settings', 'teacher', ({ body }) => {
+  route('PUT', '/api/settings', 'teacher', ({ body, user }) => {
+    if (!isAdmin(user)) throw new HttpError(403, 'Only the admin changes settings.');
     const url = String(body.recorderUrl || '').trim();
     if (url && !/^https:\/\/[^\s"'<>]+$/.test(url)) throw new HttpError(400, 'The recorder address must start with https://');
     env.settings.set({ recorderUrl: url });
@@ -666,8 +932,10 @@ function createApi(env) {
       if (r.method !== method) continue;
       const m = r.re.exec(path);
       if (!m) continue;
-      if (r.role) {
-        if (!user || !user.role) throw new HttpError(403, 'You are not on the class list.');
+      if (r.role === 'signed-in') {
+        if (!user || !user.email) throw new HttpError(403, 'Sign in with your school Google account.');
+      } else if (r.role) {
+        if (!user || !user.role || user.role === 'guest') throw new HttpError(403, 'You are not in a class yet.');
         if (r.role !== 'any' && user.role !== r.role) throw new HttpError(403, 'Not allowed.');
       }
       const params = {};
@@ -677,7 +945,40 @@ function createApi(env) {
     throw new HttpError(404, 'Not found.');
   }
 
-  return { handle };
+  // One-time upgrade from the single-teacher version: each class name the
+  // students had becomes a class owned by the admin, and tests point at those
+  // classes. Only adds rows; existing answers and scores are not touched.
+  function migrate() {
+    const owner = ownerEmail();
+    const byName = new Map(db.all('classes').filter((c) => c.ownerId === owner).map((c) => [c.name.toLowerCase(), c]));
+    const classFor = (name) => {
+      const key = name.toLowerCase();
+      if (!byName.has(key)) byName.set(key, db.insert('classes', { ownerId: owner, name, joinCode: newJoinCode(name), joinMode: 'off', classroomId: '', createdAt: now() }));
+      return byName.get(key);
+    };
+    const hasMembership = new Set(db.all('members').map((m) => m.studentId));
+    for (const s of db.all('students')) {
+      if (hasMembership.has(s.id)) continue;
+      addMember(classFor(String(s.className || '').trim() || 'My students').id, s.id, 'active');
+    }
+    for (const t of db.all('tests')) {
+      const patch = {};
+      if (!t.ownerId) patch.ownerId = owner;
+      if (!Array.isArray(t.data.classIds)) {
+        const names = (t.data.classes || []).map((n) => String(n).trim()).filter(Boolean);
+        patch.data = Object.assign({}, t.data, { classIds: names.map((n) => classFor(n).id) });
+      }
+      if (Object.keys(patch).length) db.update('tests', t.id, patch);
+    }
+  }
+
+  return { handle, migrate };
 }
+
+const CLASSROOM_NO_EMAILS =
+  'Google Classroom didn’t share the students’ email addresses. Update the app’s manifest (appsscript.json) as in the update instructions, run "authorize" once, and allow every permission.';
+
+const CLASSROOM_OWNER_ONLY =
+  'Google Classroom import works only for the person who set up the app (Google runs the app with their account). Use the class code instead.';
 
 if (typeof module !== 'undefined') module.exports = { createApi, HttpError };

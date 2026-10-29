@@ -29,6 +29,7 @@
     const role = BOOT.user.role;
     if (role === 'teacher') App.teacherRoute(name || 'tests', arg && decodeURIComponent(arg), rest.join('/'));
     else if (role === 'student') App.studentRoute(name || 'my', arg && decodeURIComponent(arg));
+    else if (role === 'guest') App.joinPage();
     else notOnList();
   };
 
