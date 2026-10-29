@@ -89,7 +89,7 @@
                   'div',
                   { class: 'card test-card' },
                   h('h2', { text: t.title }),
-                  h('p', { class: 'muted' }, `${t.questionCount} questions`, t.timeLimitMin ? ` · ${Math.round(t.timeLimitMin * (1 + t.extraTimePct / 100))} minutes` : ' · no time limit'),
+                  h('p', { class: 'muted' }, `${t.questionCount} question${t.questionCount === 1 ? '' : 's'}`, t.timeLimitMin ? ` · ${Math.round(t.timeLimitMin * (1 + t.extraTimePct / 100))} minutes` : ' · no time limit'),
                   statusCell(t),
                 ),
               ),

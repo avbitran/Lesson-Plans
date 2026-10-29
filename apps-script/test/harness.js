@@ -84,8 +84,12 @@ const api = createApi({
 // Same rules as Main.currentUser_.
 function userFor(email) {
   email = String(email || '').toLowerCase();
-  if (email === 'teacher' || email === OWNER) return { id: OWNER, email: OWNER, role: 'teacher', admin: true, name: 'teacher' };
-  if (db.get('teachers', email)) return { id: email, email, role: 'teacher', admin: false, name: email.split('@')[0] };
+  if (email === 'teacher' || email === OWNER) {
+    const me = db.get('teachers', OWNER);
+    return { id: OWNER, email: OWNER, role: 'teacher', admin: true, name: (me && me.name) || 'teacher' };
+  }
+  const t = db.get('teachers', email);
+  if (t) return { id: email, email, role: 'teacher', admin: false, name: t.name || email.split('@')[0] };
   const s = db.get('students', email);
   if (!s) return email ? { id: email, email, role: 'guest' } : { role: null, email: '' };
   return { id: email, email, role: 'student', name: s.name, readAloud: !!s.readAloud, voiceAnswers: !!s.voiceAnswers, extraTimePct: s.extraTimePct || 0 };

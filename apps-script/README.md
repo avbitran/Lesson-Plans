@@ -56,6 +56,10 @@ Read-aloud, voice answers and extra time are set per student, and every teacher 
 
 **Results.** Click the test's name to watch live, then **Grade** each student and **Save & return to student**.
 
+**Sharing a test.** **Share** next to a test: not shared, all teachers, or chosen teachers. They see it under **Shared with me**, can look at it in student view and **make their own copy** to edit and give their classes. They can't change yours or see your students' results.
+
+**Names.** Google only tells the app email addresses, which at many schools are numbers. Click your name at the top right to set the name others see; the admin can set names on the Teachers page. Students' names come from Google Classroom or the join form, and ✏️ next to a student renames them.
+
 **Teachers** (admin only). Add colleagues' school emails. They open the same app link and see their own empty Tests and Classes pages. **Make an installable copy** creates the install link for a teacher at another school.
 
 **The link for students** is the **Web app URL**, ending in `/exec`. To find it again: Apps Script editor → **Deploy → Manage deployments**. Don't send the editor's address or a link ending in `/dev`.

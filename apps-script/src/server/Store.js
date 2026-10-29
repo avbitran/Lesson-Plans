@@ -9,7 +9,7 @@ const SCHEMAS = {
   teachers: ['id', 'name', 'addedAt:num'],
   classes: ['id', 'ownerId', 'name', 'joinCode', 'joinMode', 'classroomId', 'createdAt:num'],
   members: ['id', 'classId', 'studentId', 'status', 'addedAt:num'],
-  tests: ['id', 'ownerId', 'title', 'status', 'updatedAt:num', 'data:json:8'],
+  tests: ['id', 'ownerId', 'title', 'status', 'updatedAt:num', 'data:json:8', 'sharedWith'],
   attempts: [
     'id', 'testId', 'studentId', 'status', 'startedAt:num', 'deadlineAt:num', 'submittedAt:num', 'submitReason',
     'score:num', 'maxScore:num', 'returnedAt:num', 'clientId', 'violations:num', 'feedback',

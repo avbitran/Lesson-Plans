@@ -17,6 +17,8 @@ const ATTEMPT_LABEL = { in_progress: 'Working', locked: 'Paused', submitted: 'To
 
 async function testsPage() {
   const { tests } = await api('GET', '/api/tests');
+  const mine = tests.filter((t) => !t.shared);
+  const shared = tests.filter((t) => t.shared);
   const importInput = h('input', { type: 'file', accept: '.json,application/json', hidden: true });
   importInput.addEventListener('change', async () => {
     const file = importInput.files[0];
@@ -44,34 +46,114 @@ async function testsPage() {
         h('a', { class: 'btn btn-primary', href: '#edit/new' }, '+ New test'),
       ),
     ),
-    tests.length
-      ? h(
-          'table',
-          { class: 'table' },
-          h('thead', {}, h('tr', {}, ['Test', 'Status', 'Classes', 'Working now', 'To grade', 'Returned', ''].map((x) => h('th', { text: x })))),
-          h(
-            'tbody',
-            {},
-            tests.map((t) =>
-              h(
-                'tr',
-                {},
-                h('td', {}, h('a', { href: `#results/${t.id}`, class: 'strong', text: t.title }), h('div', { class: 'muted small', text: `${t.questionCount} questions · edited ${fmtDate(t.updatedAt)}` })),
-                h('td', {}, h('span', { class: `badge badge-${t.status}`, text: STATUS_LABEL[t.status] })),
-                h('td', {}, t.classes.join(', ') || 'All my classes', t.ownerId && t.ownerId !== BOOT.user.id ? h('div', { class: 'muted small', text: `by ${t.ownerId}` }) : null),
-                h('td', { text: t.active || '' }),
-                h('td', {}, t.toGrade ? h('span', { class: 'badge badge-warn', text: t.toGrade }) : ''),
-                h('td', { text: t.returned || '' }),
-                h('td', {}, h('div', { class: 'row tight' }, h('a', { class: 'btn btn-ghost', href: App.previewHash(t.id, { back: '#tests' }), title: 'See the test exactly as students do' }, '👁 Student view'), h('a', { class: 'btn btn-ghost', href: `#edit/${t.id}` }, 'Edit'), h('a', { class: 'btn btn-ghost', href: `#results/${t.id}` }, 'Results')),
-              )),
+    mine.length
+      ? testsTable(mine, false)
+      : h('div', { class: 'card' }, h('p', { text: 'No tests yet. Create one, or import the sample test (samples folder in the GitHub repo).' })),
+    shared.length ? [h('h2', { text: 'Shared with me' }), h('p', { class: 'muted', text: 'Tests other teachers shared with you. Look at them in student view, or make your own copy to edit and give to your classes.' }), testsTable(shared, true)] : null,
+  );
+}
+
+function testsTable(tests, sharedList) {
+  const actions = (t) =>
+    sharedList
+      ? [
+          h('a', { class: 'btn btn-ghost', href: App.previewHash(t.id, { back: '#tests' }) }, '👁 Student view'),
+          h('button', { class: 'btn btn-ghost', onclick: async () => {
+            try {
+              const r = await api('POST', `/api/tests/${t.id}/duplicate`);
+              toast('Copied into your tests as a draft.', 'ok');
+              location.hash = `#edit/${r.id}`;
+            } catch (e) {
+              toast(e.message, 'error');
+            }
+          } }, 'Make a copy'),
+        ]
+      : [
+          h('a', { class: 'btn btn-ghost', href: App.previewHash(t.id, { back: '#tests' }), title: 'See the test exactly as students do' }, '👁 Student view'),
+          h('a', { class: 'btn btn-ghost', href: `#edit/${t.id}` }, 'Edit'),
+          h('button', { class: 'btn btn-ghost', onclick: () => shareDialog(t) }, 'Share'),
+          h('a', { class: 'btn btn-ghost', href: `#results/${t.id}` }, 'Results'),
+        ];
+  const by = (t) => (t.ownerId && t.ownerId !== BOOT.user.id ? h('div', { class: 'muted small', text: `by ${t.ownerName || t.ownerId}` }) : null);
+  const sharing = (t) => (t.sharing ? h('span', { class: 'badge', title: 'Shared with other teachers', text: t.sharing === 'all' ? 'Shared with all' : `Shared with ${t.sharing}` }) : null);
+  return h(
+    'table',
+    { class: 'table' },
+    h('thead', {}, h('tr', {}, (sharedList ? ['Test', 'Shared by', ''] : ['Test', 'Status', 'Classes', 'Working now', 'To grade', 'Returned', '']).map((x) => h('th', { text: x })))),
+    h(
+      'tbody',
+      {},
+      tests.map((t) =>
+        sharedList
+          ? h(
+              'tr',
+              {},
+              h('td', {}, h('strong', { text: t.title }), h('div', { class: 'muted small', text: `${t.questionCount} question${t.questionCount === 1 ? '' : 's'} · edited ${fmtDate(t.updatedAt)}` })),
+              h('td', { text: t.ownerName || t.ownerId }),
+              h('td', {}, h('div', { class: 'row tight' }, actions(t))),
+            )
+          : h(
+              'tr',
+              {},
+              h('td', {}, h('a', { href: `#results/${t.id}`, class: 'strong', text: t.title }), ' ', sharing(t), h('div', { class: 'muted small', text: `${t.questionCount} question${t.questionCount === 1 ? '' : 's'} · edited ${fmtDate(t.updatedAt)}` })),
+              h('td', {}, h('span', { class: `badge badge-${t.status}`, text: STATUS_LABEL[t.status] })),
+              h('td', {}, t.classes.join(', ') || 'All my classes', by(t)),
+              h('td', { text: t.active || '' }),
+              h('td', {}, t.toGrade ? h('span', { class: 'badge badge-warn', text: t.toGrade }) : ''),
+              h('td', { text: t.returned || '' }),
+              h('td', {}, h('div', { class: 'row tight' }, actions(t))),
             ),
-          ),
-        )
-      : h(
-          'div',
-          { class: 'card' },
-          h('p', { text: 'No tests yet. Create one, or import the sample test (samples folder in the GitHub repo).' }),
-        ),
+      ),
+    ),
+  );
+}
+
+// Share one test: nobody, every teacher, or chosen teachers.
+async function shareDialog(t) {
+  let teachers;
+  let current;
+  try {
+    [{ teachers }, current] = await Promise.all([api('GET', '/api/teachers/names'), api('GET', `/api/tests/${t.id}`)]);
+  } catch (e) {
+    return toast(e.message, 'error');
+  }
+  const owner = current.ownerId;
+  const others = teachers.filter((x) => x.email !== owner);
+  const now = current.sharedWith || '';
+  const chosen = new Set(now === '*' ? [] : now.split(',').filter(Boolean));
+  const mode = now === '*' ? 'all' : chosen.size ? 'some' : 'none';
+  const radios = [
+    ['none', 'Not shared'],
+    ['all', 'All teachers'],
+    ['some', 'Only the teachers I choose'],
+  ].map(([v, l]) => h('label', { class: 'check' }, h('input', { type: 'radio', name: 'share-mode', value: v, checked: v === mode }), l));
+  const picks = others.map((x) => h('label', { class: 'check' }, h('input', { type: 'checkbox', value: x.email, checked: chosen.has(x.email) }), `${x.name} (${x.email})`));
+  const pickBox = h('div', { class: 'share-picks' }, others.length ? picks : h('p', { class: 'muted', text: 'There are no other teachers yet. The admin adds them on the Teachers page.' }));
+  const sync = () => (pickBox.hidden = radios.find((r) => r.firstChild.checked).firstChild.value !== 'some');
+  radios.forEach((r) => r.firstChild.addEventListener('change', sync));
+  sync();
+  modal(
+    `Share “${t.title}”`,
+    h('div', { class: 'form' }, h('p', { class: 'muted', text: 'Teachers you share with can look at the test and make their own copy to give their classes. They can’t change yours or see your students’ results.' }), radios, pickBox),
+    [
+      ['Cancel', null],
+      [
+        'Save',
+        async () => {
+          const m = radios.find((r) => r.firstChild.checked).firstChild.value;
+          const list = picks.filter((p) => p.firstChild.checked).map((p) => p.firstChild.value);
+          try {
+            await api('PUT', `/api/tests/${t.id}/share`, { mode: m, teachers: list });
+            toast(m === 'none' ? 'No longer shared.' : 'Shared.', 'ok');
+            route();
+          } catch (e) {
+            toast(e.message, 'error');
+            return false;
+          }
+        },
+        'btn-primary',
+      ],
+    ],
   );
 }
 
@@ -160,6 +242,16 @@ async function editorPage(id) {
   if (id === 'new') data = blankTest();
   else {
     const r = await api('GET', `/api/tests/${id}`);
+    if (r.canEdit === false) {
+      return page(
+        h('h1', { text: r.data.title }),
+        h('p', { class: 'muted', text: 'This test was shared with you. Make your own copy to edit it and give it to your classes.' }),
+        h('div', { class: 'row' }, h('a', { class: 'btn', href: App.previewHash(id, { back: '#tests' }) }, '👁 Student view'), h('button', { class: 'btn btn-primary', onclick: async () => {
+          const c = await api('POST', `/api/tests/${id}/duplicate`);
+          location.hash = `#edit/${c.id}`;
+        } }, 'Make a copy')),
+      );
+    }
     data = r.data;
     status = r.status;
     ownerId = r.ownerId;
@@ -996,7 +1088,7 @@ async function gradePage(attemptId) {
         'div',
         {},
         h('a', { href: `#results/${attempt.testId}`, text: `← ${test.title}` }),
-        h('h1', { text: student.name }),
+        h('h1', {}, student.name, h('span', { class: 'muted heading-email', text: ` (${student.email})` })),
         h(
           'p',
           { class: 'muted' },
@@ -1091,6 +1183,26 @@ function parseLines(text) {
     .map(([email, name]) => ({ email, name }));
 }
 
+function renameStudent(s) {
+  const input = h('input', { value: s.name, placeholder: 'First and last name' });
+  modal(`Name for ${s.email}`, h('div', { class: 'form' }, h('p', { class: 'muted', text: 'Every teacher who has this student sees the new name.' }), h('label', {}, 'Name', input)), [
+    ['Cancel', null],
+    [
+      'Save',
+      async () => {
+        try {
+          await api('PUT', `/api/students/${encodeURIComponent(s.id)}`, { name: input.value });
+          route();
+        } catch (e) {
+          toast(e.message, 'error');
+          return false;
+        }
+      },
+      'btn-primary',
+    ],
+  ]);
+}
+
 async function classesPage() {
   App.studentsCache = null; // the student view's "As:" list reloads after changes
   const { classes, classroomAvailable, classroomNeedsSetup } = await api('GET', '/api/classes');
@@ -1179,7 +1291,14 @@ async function classesPage() {
       h(
         'tr',
         { class: s.status === 'pending' ? 'row-alert' : '' },
-        h('td', {}, h('strong', { text: s.name }), h('div', { class: 'muted small' }, s.email, ' · ', h('a', { href: `#studentview/${encodeURIComponent(s.id)}` }, '👁 what they see'))),
+        h(
+          'td',
+          {},
+          h('strong', { text: s.name }),
+          ' ',
+          h('button', { class: 'btn btn-ghost small', title: 'Change the name', 'aria-label': `Rename ${s.name}`, onclick: () => renameStudent(s) }, '✏️'),
+          h('div', { class: 'muted small' }, s.email, ' · ', h('a', { href: `#studentview/${encodeURIComponent(s.id)}` }, '👁 what they see')),
+        ),
         s.status === 'pending'
           ? h('td', { colspan: 3 }, h('span', { class: 'badge badge-warn', text: 'Asked to join' }), ' ', h('button', { class: 'btn btn-primary', onclick: () => act(() => api('POST', `/api/classes/${c.id}/students/${encodeURIComponent(s.id)}/approve`), `${s.name} approved.`) }, 'Approve'))
           : [
@@ -1193,7 +1312,7 @@ async function classesPage() {
     return h(
       'details',
       { class: 'card class-card', open: classes.length <= 2 || pending.length > 0 },
-      h('summary', {}, h('strong', { text: c.name }), h('span', { class: 'muted', text: ` · ${active.length} student${active.length === 1 ? '' : 's'}` }), pending.length ? h('span', { class: 'badge badge-warn', text: `${pending.length} waiting` }) : null, c.ownerId !== BOOT.user.id ? h('span', { class: 'muted small', text: ` · ${c.ownerId}` }) : null),
+      h('summary', {}, h('strong', { text: c.name }), h('span', { class: 'muted', text: ` · ${active.length} student${active.length === 1 ? '' : 's'}` }), pending.length ? h('span', { class: 'badge badge-warn', text: `${pending.length} waiting` }) : null, c.ownerId !== BOOT.user.id ? h('span', { class: 'muted small', text: ` · ${c.ownerName || c.ownerId}` }) : null),
       h('div', { class: 'form' },
         h('div', { class: 'row' }, name, h('button', { class: 'btn btn-ghost danger', onclick: () =>
           modal(`Delete the class ${c.name}?`, h('p', { text: 'Students stay in the system with their results; they’re just no longer in this class.' }), [
@@ -1221,9 +1340,30 @@ async function classesPage() {
 
 // ================================================================== teachers
 
+function renameTeacher(t) {
+  const input = h('input', { value: t.name && t.name !== t.email.split('@')[0] ? t.name : '', placeholder: 'e.g. Ruth Katz' });
+  modal(`Name for ${t.email}`, h('div', { class: 'form' }, h('label', {}, 'Name', input)), [
+    ['Cancel', null],
+    [
+      'Save',
+      async () => {
+        try {
+          await api('PUT', `/api/teachers/${encodeURIComponent(t.id)}`, { name: input.value });
+          route();
+        } catch (e) {
+          toast(e.message, 'error');
+          return false;
+        }
+      },
+      'btn-primary',
+    ],
+  ]);
+}
+
 async function teachersPage() {
   const { teachers } = await api('GET', '/api/teachers');
   const email = h('input', { type: 'email', placeholder: 'colleague@school.org', class: 'grow' });
+  const name = h('input', { placeholder: 'Their name, e.g. Ruth Katz', class: 'grow' });
   const shareBox = h('div');
   page(
     h('div', { class: 'page-head' }, h('h1', { text: 'Teachers' })),
@@ -1233,16 +1373,16 @@ async function teachersPage() {
       { class: 'table' },
       h('thead', {}, h('tr', {}, ['Teacher', 'Classes', 'Tests', ''].map((x) => h('th', { text: x })))),
       h('tbody', {}, teachers.map((t) =>
-        h('tr', {}, h('td', {}, h('strong', { text: t.email }), t.admin ? h('span', { class: 'badge', text: 'admin' }) : null), h('td', { text: t.classes }), h('td', { text: t.tests }),
+        h('tr', {}, h('td', {}, h('strong', { text: t.name }), ' ', t.admin ? h('span', { class: 'badge', text: 'admin' }) : null, h('div', { class: 'muted small', text: t.email }), h('button', { class: 'btn btn-ghost small', onclick: () => renameTeacher(t) }, '✏️ Name')), h('td', { text: t.classes }), h('td', { text: t.tests }),
           h('td', {}, t.admin ? null : h('button', { class: 'btn btn-ghost danger', onclick: async () => {
             try { await api('DELETE', `/api/teachers/${encodeURIComponent(t.id)}`); route(); } catch (e) { toast(e.message, 'error'); }
           } }, 'Remove')),
         ),
       )),
     ),
-    h('div', { class: 'card row' }, email, h('button', { class: 'btn btn-primary', onclick: async () => {
+    h('div', { class: 'card row' }, name, email, h('button', { class: 'btn btn-primary', onclick: async () => {
       try {
-        await api('POST', '/api/teachers', { email: email.value });
+        await api('POST', '/api/teachers', { email: email.value, name: name.value });
         toast('Added. Send them the app link: they open it and see their own empty Tests page.', 'ok');
         route();
       } catch (e) {
@@ -1463,7 +1603,7 @@ async function studentHomePage(studentId) {
               'div',
               { class: 'card test-card' },
               h('h2', { text: t.title }),
-              h('p', { class: 'muted' }, `${t.questionCount} questions`, t.timeLimitMin ? ` · ${Math.round(t.timeLimitMin * (1 + t.extraTimePct / 100))} minutes` : ' · no time limit'),
+              h('p', { class: 'muted' }, `${t.questionCount} question${t.questionCount === 1 ? '' : 's'}`, t.timeLimitMin ? ` · ${Math.round(t.timeLimitMin * (1 + t.extraTimePct / 100))} minutes` : ' · no time limit'),
               status(t),
             ),
           ),

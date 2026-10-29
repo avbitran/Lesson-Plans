@@ -156,6 +156,17 @@ function createApi(env) {
     return t;
   }
 
+  // Sharing: '' = nobody, '*' = every teacher, else a comma-separated list of
+  // teacher emails. Shared teachers may look at the test (student view) and
+  // make their own copy; they never see its results or change it.
+  const sharedList = (t) => String(t.sharedWith || '').split(',').map((x) => x.trim()).filter(Boolean);
+  const sharedWithUser = (user, t) => t.ownerId !== user.id && (t.sharedWith === '*' || sharedList(t).includes(user.id));
+  function viewableTest(user, id) {
+    const t = getTest(id);
+    if (!ownsTest(user, t) && !sharedWithUser(user, t)) throw new HttpError(404, 'Test not found.');
+    return t;
+  }
+
   function myClass(user, id) {
     const c = db.get('classes', String(id));
     if (!c || !(isAdmin(user) || c.ownerId === user.id)) throw new HttpError(404, 'Class not found.');
@@ -213,6 +224,14 @@ function createApi(env) {
     db.insert('members', { classId, studentId, status, addedAt: now() });
     return status;
   }
+
+  // Names to show instead of (often numeric) school emails.
+  const localPart = (email) => String(email || '').split('@')[0];
+  function teacherName(email) {
+    const t = db.get('teachers', email);
+    return (t && t.name) || localPart(email);
+  }
+  const isPlaceholderName = (s) => !s.name || s.name === localPart(s.id);
 
   function ensureStudent(email, name) {
     const s = db.get('students', email);
@@ -332,6 +351,7 @@ function createApi(env) {
       id: c.id,
       name: c.name,
       ownerId: c.ownerId,
+      ownerName: teacherName(c.ownerId),
       joinCode: c.joinCode,
       joinMode: c.joinMode || 'off',
       classroomId: c.classroomId || '',
@@ -391,7 +411,7 @@ function createApi(env) {
         continue;
       }
       const s = ensureStudent(email, p.name);
-      if (p.name && String(p.name).trim() && s.name === email.split('@')[0]) db.update('students', email, { name: String(p.name).trim().slice(0, 100) });
+      if (p.name && String(p.name).trim() && isPlaceholderName(s)) db.update('students', email, { name: String(p.name).trim().slice(0, 100) });
       addMember(c.id, email, 'active');
       added++;
     }
@@ -434,7 +454,8 @@ function createApi(env) {
         skipped.push(`${p.name || 'A student'}: Classroom did not share their email`);
         continue;
       }
-      ensureStudent(email, p.name);
+      const s = ensureStudent(email, p.name);
+      if (p.name && isPlaceholderName(s)) db.update('students', email, { name: String(p.name).trim().slice(0, 100) });
       if (addMember(c.id, email, 'active')) added++;
     }
     db.update('classes', c.id, { classroomId: courseId });
@@ -493,16 +514,16 @@ function createApi(env) {
     if (!isAdmin(user)) throw new HttpError(403, 'Only the admin manages teachers.');
     const classes = db.all('classes');
     const tests = db.all('tests', true);
-    const row = (email, admin, name) => ({
+    const row = (email, admin) => ({
       id: email,
       email,
-      name: name || '',
+      name: teacherName(email),
       admin,
       classes: classes.filter((c) => c.ownerId === email).length,
       tests: tests.filter((t) => t.ownerId === email).length,
     });
     return {
-      teachers: [row(ownerEmail(), true)].concat(db.all('teachers').filter((t) => t.id !== ownerEmail()).map((t) => row(t.id, false, t.name))),
+      teachers: [row(ownerEmail(), true)].concat(db.all('teachers').filter((t) => t.id !== ownerEmail()).map((t) => row(t.id, false))),
     };
   });
 
@@ -513,6 +534,32 @@ function createApi(env) {
     if (email !== ownerEmail() && !db.get('teachers', email)) db.insert('teachers', { id: email, name: String(body.name || '').trim().slice(0, 100), addedAt: now() });
     return { ok: true };
   });
+
+  route('PUT', '/api/teachers/:id', 'teacher', ({ params, body, user }) => {
+    if (!isAdmin(user) && params.id !== user.id) throw new HttpError(403, 'Only the admin changes other teachers.');
+    setTeacherName(params.id, body.name);
+    return { ok: true };
+  });
+
+  // Every teacher can set their own name (shown instead of their email).
+  function setTeacherName(email, name) {
+    const clean = String(name || '').trim().slice(0, 100);
+    if (email !== ownerEmail() && !db.get('teachers', email)) throw new HttpError(404, 'Teacher not found.');
+    if (db.get('teachers', email)) db.update('teachers', email, { name: clean });
+    else db.insert('teachers', { id: email, name: clean, addedAt: now() }); // the admin's own row
+  }
+  route('PUT', '/api/me/name', 'teacher', ({ body, user }) => {
+    if (!String(body.name || '').trim()) throw new HttpError(400, 'Write your name.');
+    setTeacherName(user.id, body.name);
+    return { name: teacherName(user.id) };
+  });
+
+  // Names of all teachers, for choosing whom to share a test with.
+  route('GET', '/api/teachers/names', 'teacher', () => ({
+    teachers: [ownerEmail()]
+      .concat(db.all('teachers').map((t) => t.id).filter((e) => e !== ownerEmail()))
+      .map((email) => ({ email, name: teacherName(email) })),
+  }));
 
   route('DELETE', '/api/teachers/:id', 'teacher', ({ params, user }) => {
     if (!isAdmin(user)) throw new HttpError(403, 'Only the admin manages teachers.');
@@ -537,16 +584,20 @@ function createApi(env) {
     return {
       tests: db
         .all('tests')
-        .filter((t) => ownsTest(user, t))
+        .filter((t) => ownsTest(user, t) || sharedWithUser(user, t))
         .sort((a, b) => b.updatedAt - a.updatedAt)
         .map((t) => {
-          const mine = fresh.filter((a) => a.testId === t.id);
+          const shared = !ownsTest(user, t);
+          const mine = shared ? [] : fresh.filter((a) => a.testId === t.id);
           return {
+            shared,
+            sharing: t.sharedWith === '*' ? 'all' : sharedList(t).length ? `${sharedList(t).length}` : '',
             id: t.id,
             title: t.title,
             status: t.status,
             updatedAt: t.updatedAt,
             ownerId: t.ownerId,
+            ownerName: teacherName(t.ownerId),
             classes: (t.data.classIds || []).map((id) => classNames.get(id)).filter(Boolean),
             questionCount: t.data.questions.filter((q) => q.type !== 'section').length,
             active: mine.filter((a) => a.status === 'in_progress' || a.status === 'locked').length,
@@ -564,8 +615,20 @@ function createApi(env) {
   });
 
   route('GET', '/api/tests/:id', 'teacher', ({ params, user }) => {
+    const t = viewableTest(user, params.id);
+    return { id: t.id, status: t.status, data: t.data, ownerId: t.ownerId, canEdit: ownsTest(user, t), sharedWith: ownsTest(user, t) ? t.sharedWith || '' : undefined };
+  });
+
+  route('PUT', '/api/tests/:id/share', 'teacher', ({ params, body, user }) => {
     const t = myTest(user, params.id);
-    return { id: t.id, status: t.status, data: t.data, ownerId: t.ownerId };
+    let value = '';
+    if (body.mode === 'all') value = '*';
+    else if (body.mode === 'some') {
+      const known = new Set([ownerEmail()].concat(db.all('teachers').map((x) => x.id)));
+      value = [...new Set((Array.isArray(body.teachers) ? body.teachers : []).map(cleanEmail))].filter((e) => known.has(e) && e !== t.ownerId).join(',');
+    }
+    db.update('tests', t.id, { sharedWith: value });
+    return { sharedWith: value };
   });
 
   route('PUT', '/api/tests/:id', 'teacher', ({ params, body, user }) => {
@@ -579,7 +642,7 @@ function createApi(env) {
   });
 
   route('POST', '/api/tests/:id/duplicate', 'teacher', ({ params, user }) => {
-    const t = myTest(user, params.id);
+    const t = viewableTest(user, params.id);
     const data = cleanClassIds(user, Object.assign({}, t.data, { title: `${t.data.title} (copy)`.slice(0, 200) }));
     const copy = db.insert('tests', { ownerId: user.id, title: data.title, status: 'draft', data, updatedAt: now() });
     return { id: copy.id };
@@ -592,7 +655,7 @@ function createApi(env) {
     return { ok: true };
   });
 
-  route('GET', '/api/tests/:id/preview', 'teacher', ({ params, user }) => ({ test: viewOf(myTest(user, params.id).data) }));
+  route('GET', '/api/tests/:id/preview', 'teacher', ({ params, user }) => ({ test: viewOf(viewableTest(user, params.id).data) }));
 
   route('GET', '/api/tests/:id/audio', 'teacher', ({ params, user }) => audioStatus(myTest(user, params.id).data));
 

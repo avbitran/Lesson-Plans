@@ -148,8 +148,38 @@ function header(links = []) {
     { class: 'topbar' },
     h('a', { class: 'brand', href: user.role === 'teacher' ? '#tests' : '#my' }, 'Online Tests'),
     h('nav', {}, links.map(([label, href]) => h('a', { href }, label))),
-    h('div', { class: 'who', text: user.role === 'student' ? `${user.name} · ${user.email}` : user.email }),
+    whoAmI(user),
   );
+}
+
+// "Name (email)" at the top right. Teachers click it to set their name,
+// since Google only tells the app their email.
+function whoAmI(user) {
+  const label = () => [h('strong', { text: user.name || user.email }), h('span', { class: 'muted', text: ` (${user.email})` })];
+  if (user.role !== 'teacher') return h('div', { class: 'who' }, label());
+  const btn = h('button', { class: 'btn btn-ghost who', type: 'button', title: 'Change the name others see' }, label(), ' ✏️');
+  btn.addEventListener('click', () => {
+    const input = h('input', { value: user.name && user.name !== user.email.split('@')[0] ? user.name : '', placeholder: 'e.g. Avi Bitran', autocomplete: 'name' });
+    modal('Your name', h('div', { class: 'form' }, h('p', { class: 'muted', text: 'Other teachers see this name instead of your email.' }), h('label', {}, 'Name', input)), [
+      ['Cancel', null],
+      [
+        'Save',
+        async () => {
+          try {
+            const r = await api('PUT', '/api/me/name', { name: input.value });
+            user.name = r.name;
+            clear(btn, label(), ' ✏️');
+            toast('Saved.', 'ok');
+          } catch (e) {
+            toast(e.message, 'error');
+            return false;
+          }
+        },
+        'btn-primary',
+      ],
+    ]);
+  });
+  return btn;
 }
 
 function modal(title, body, actions) {

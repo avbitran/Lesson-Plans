@@ -362,8 +362,8 @@ function chatterboxTts_(url, key, o) {
 function currentUser_(db, ownerEmail) {
   const email = String(Session.getActiveUser().getEmail() || '').toLowerCase();
   if (!email) return { role: null, email: '' };
-  if (email === ownerEmail) return { id: email, email, role: 'teacher', admin: true, name: email.split('@')[0] };
   const t = db.get('teachers', email);
+  if (email === ownerEmail) return { id: email, email, role: 'teacher', admin: true, name: (t && t.name) || email.split('@')[0] };
   if (t) return { id: email, email, role: 'teacher', admin: false, name: t.name || email.split('@')[0] };
   const s = db.get('students', email);
   if (!s) return { id: email, email, role: 'guest' };

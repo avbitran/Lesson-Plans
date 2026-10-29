@@ -426,3 +426,68 @@ test('backups are admin-only', () => {
   assert.throws(() => a2.handle('GET', '/api/backups', {}, otherTeacher('x@school.org')), /Only the admin/);
   assert.ok(call && api);
 });
+
+test('sharing a test: chosen teachers or everyone can view and copy it, nothing more', () => {
+  const { teacher, otherTeacher, asStudent, addClass, call } = setup();
+  call(teacher, 'POST', '/api/teachers', { email: 'ruth@school.org', name: 'Ruth Katz' });
+  call(teacher, 'POST', '/api/teachers', { email: 'dan@school.org' });
+  const ruth = otherTeacher('ruth@school.org');
+  const dan = otherTeacher('dan@school.org');
+  addClass(teacher, 'Mine', [{ email: 's@school.org', name: 'S' }]);
+  const id = call(teacher, 'POST', '/api/tests', { data: sample }).body.id;
+  call(teacher, 'PUT', `/api/tests/${id}`, { status: 'open' });
+  call(asStudent('s@school.org'), 'POST', `/api/my/tests/${id}/start`, { clientId: 'c' });
+
+  assert.equal(call(ruth, 'GET', '/api/tests').body.tests.length, 0, 'not shared yet');
+  assert.equal(call(ruth, 'PUT', `/api/tests/${id}/share`, { mode: 'all' }).status, 404, 'only the owner shares');
+  call(teacher, 'PUT', `/api/tests/${id}/share`, { mode: 'some', teachers: ['Ruth@School.org', 'stranger@school.org'] });
+  assert.equal(call(teacher, 'GET', `/api/tests/${id}`).body.sharedWith, 'ruth@school.org', 'unknown emails dropped');
+
+  const list = call(ruth, 'GET', '/api/tests').body.tests;
+  assert.equal(list.length, 1);
+  assert.equal(list[0].shared, true);
+  assert.equal(list[0].ownerName, 'teacher', 'owner without a name shows the email’s first part');
+  assert.equal(list[0].toGrade, 0, 'no results counts for a shared test');
+  assert.equal(call(dan, 'GET', '/api/tests').body.tests.length, 0, 'Dan was not chosen');
+  const view = call(ruth, 'GET', `/api/tests/${id}`).body;
+  assert.equal(view.canEdit, false);
+  assert.equal(view.sharedWith, undefined);
+  assert.equal(call(ruth, 'GET', `/api/tests/${id}/preview`).status, 200);
+  assert.equal(call(ruth, 'PUT', `/api/tests/${id}`, { status: 'closed' }).status, 404, "can't change it");
+  assert.equal(call(ruth, 'GET', `/api/tests/${id}/attempts`).status, 404, "can't see results");
+  assert.equal(call(ruth, 'DELETE', `/api/tests/${id}`).status, 404);
+  const copy = call(ruth, 'POST', `/api/tests/${id}/duplicate`).body.id;
+  const mine = call(ruth, 'GET', '/api/tests').body.tests.find((t) => t.id === copy);
+  assert.equal(mine.shared, false, 'the copy is hers');
+  assert.equal(mine.status, 'draft');
+  assert.deepEqual(call(ruth, 'GET', `/api/tests/${copy}`).body.data.classIds, [], "the copy doesn't keep the owner's classes");
+
+  call(teacher, 'PUT', `/api/tests/${id}/share`, { mode: 'all' });
+  assert.equal(call(dan, 'GET', '/api/tests').body.tests.length, 1, 'everyone now');
+  call(teacher, 'PUT', `/api/tests/${id}/share`, { mode: 'none' });
+  assert.equal(call(dan, 'GET', '/api/tests').body.tests.length, 0);
+  assert.equal(call(ruth, 'GET', '/api/tests').body.tests.length, 1, 'only her own copy remains');
+});
+
+test('names instead of email addresses', () => {
+  const { db, teacher, otherTeacher, addClass, call } = setup({
+    classroom: { courses: () => [], students: () => [{ email: '123456@school.org', name: 'Dana Levi' }] },
+  });
+  call(teacher, 'POST', '/api/teachers', { email: '9876@school.org', name: 'Ruth Katz' });
+  const ruth = otherTeacher('9876@school.org');
+  assert.deepEqual(call(ruth, 'GET', '/api/teachers/names').body.teachers.map((t) => t.name), ['teacher', 'Ruth Katz']);
+  assert.equal(call(ruth, 'PUT', '/api/me/name', { name: 'Ruth K.' }).body.name, 'Ruth K.');
+  assert.equal(call(ruth, 'PUT', '/api/teachers/teacher@school.org', { name: 'x' }).status, 403, "can't rename others");
+  call(teacher, 'PUT', '/api/me/name', { name: 'Avi Bitran' });
+  assert.deepEqual(call(teacher, 'GET', '/api/teachers').body.teachers.map((t) => [t.name, t.admin]), [['Avi Bitran', true], ['Ruth K.', false]], "the admin's own row doesn't appear twice");
+  // A student first added with only a (numeric) email gets the real name from Classroom.
+  const c = addClass(teacher, '10-3', [{ email: '123456@school.org' }]);
+  assert.equal(db.get('students', '123456@school.org').name, '123456');
+  call(teacher, 'POST', `/api/classes/${c}/classroom`, { courseId: 'x' });
+  assert.equal(db.get('students', '123456@school.org').name, 'Dana Levi');
+  // ...but a name a teacher typed is not overwritten.
+  call(teacher, 'PUT', '/api/students/123456@school.org', { name: 'Dana L.' });
+  call(teacher, 'POST', `/api/classes/${c}/classroom`, { courseId: 'x' });
+  assert.equal(db.get('students', '123456@school.org').name, 'Dana L.');
+  assert.equal(call(teacher, 'GET', '/api/classes').body.classes[0].ownerName, 'Avi Bitran');
+});

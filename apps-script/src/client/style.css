@@ -347,3 +347,8 @@ html.is-loading, html.is-loading * { cursor: progress; }
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { html.is-loading body::before, .is-busy::after { animation-duration: 3s; } }
+
+.who strong { font-weight: 600; }
+.btn.small { padding: .1rem .4rem; font-size: .8rem; }
+.heading-email { font-size: .55em; font-weight: 400; }
+.share-picks { display: flex; flex-direction: column; gap: .3rem; margin-inline-start: 1.6rem; max-height: 40vh; overflow: auto; }
