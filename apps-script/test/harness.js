@@ -52,6 +52,21 @@ const api = createApi({
     students: () => [{ email: 'maya@school.org', name: 'Maya Cohen' }, { email: 'omer@school.org', name: 'Omer Levi' }],
   },
   makeInstallCopy: () => ({ copyLink: 'https://docs.google.com/spreadsheets/d/EXAMPLE/copy', fileUrl: 'about:blank', sharing: 'anyone' }),
+  // Pretend backups: remembered in memory.
+  backups: (() => {
+    const list = [];
+    let daily = true;
+    const status = () => ({ daily, lastBackup: list.length ? list[0].createdAt : null, error: '', folderUrl: 'about:blank', backups: list, keepDays: 30 });
+    return {
+      status,
+      now: () => {
+        const b = { name: `Online Tests backup ${new Date().toISOString().slice(0, 16).replace('T', ' ')} (manual)`, url: 'about:blank', createdAt: Date.now() };
+        list.unshift(b);
+        return b;
+      },
+      setDaily: (on) => (daily = on),
+    };
+  })(),
   settings: {
     get: () => ({
       recorderUrl: settings.recorderUrl || `http://localhost:${PORT}/recorder.html`,
@@ -108,7 +123,8 @@ http
           if (status === 500) console.error(e);
           out = { ok: false, status, error: e.message };
         }
-        res.end(JSON.stringify(out));
+        // DELAY=ms imitates Google's slowness, to see the loading feedback.
+        setTimeout(() => res.end(JSON.stringify(out)), Number(process.env.DELAY) || 0);
       });
       return;
     }
@@ -132,7 +148,12 @@ http
       </script></body>`);
     }
     if (url.pathname === '/') {
-      const boot = JSON.stringify({ user: userFor(url.searchParams.get('as')), recorderUrl: api.handle('GET', '/api/settings', null, userFor('teacher')).recorderUrl });
+      const who = userFor(url.searchParams.get('as'));
+      // Like Main.bootInfo: the first screen's data comes with the page.
+      const prefetch = {};
+      if (who.role === 'teacher') prefetch['GET /api/tests'] = api.handle('GET', '/api/tests', null, who);
+      else if (who.role === 'student') prefetch['GET /api/my/tests'] = api.handle('GET', '/api/my/tests', null, who);
+      const boot = JSON.stringify({ user: who, recorderUrl: api.handle('GET', '/api/settings', null, userFor('teacher')).recorderUrl, prefetch });
       const html = fs.readFileSync(path.join(__dirname, '..', 'dist', 'Index.html'), 'utf8')
         .replace('<?!= boot ?>', boot.replace(/</g, '\\u003c'))
         .replace('<div id="app">', `${SHIM}\n<div id="app">`);

@@ -470,6 +470,23 @@ function createApi(env) {
     return env.makeInstallCopy();
   });
 
+  // -------------------------------------------------------- admin: backups
+
+  const adminOnly = (user) => {
+    if (!isAdmin(user)) throw new HttpError(403, 'Only the admin manages backups.');
+  };
+  route('GET', '/api/backups', 'teacher', ({ user }) => (adminOnly(user), env.backups.status()));
+  route('POST', '/api/backups', 'teacher', ({ user }) => {
+    adminOnly(user);
+    const made = env.backups.now();
+    return Object.assign(env.backups.status(), { made });
+  });
+  route('PUT', '/api/backups', 'teacher', ({ body, user }) => {
+    adminOnly(user);
+    env.backups.setDaily(!!body.daily);
+    return env.backups.status();
+  });
+
   // ------------------------------------------------------- admin: teachers
 
   route('GET', '/api/teachers', 'teacher', ({ user }) => {

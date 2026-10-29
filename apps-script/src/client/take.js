@@ -37,6 +37,7 @@ App.take = function take(testId, { preview = false, view = {} } = {}) {
   // Called by the router when the teacher leaves a preview (or a student
   // goes back from the start screen).
   state.dispose = () => {
+    document.querySelectorAll('.selection-read').forEach((b) => b.remove());
     state.finished = true;
     intervals.forEach(clearInterval);
     clearInterval(lockPoll);
@@ -49,10 +50,10 @@ App.take = function take(testId, { preview = false, view = {} } = {}) {
 
   // ---------------------------------------------------------------- network
 
-  async function call(method, url, body) {
+  async function call(method, url, body, opts) {
     if (PREVIEW) return {};
     try {
-      return await api(method, url, body);
+      return await api(method, url, body, opts);
     } catch (e) {
       if (e.status === 423) showLocked();
       else if (e.status === 409) finish(e.message);
@@ -66,7 +67,7 @@ App.take = function take(testId, { preview = false, view = {} } = {}) {
     state.dirty = false;
     setSaveStatus('Saving…');
     try {
-      const r = await call('PUT', `/api/my/attempts/${state.attempt.id}/answers`, { clientId: CLIENT_ID, answers: state.answers });
+      const r = await call('PUT', `/api/my/attempts/${state.attempt.id}/answers`, { clientId: CLIENT_ID, answers: state.answers }, { quiet: true });
       if (r.deadlineAt) state.attempt.deadlineAt = r.deadlineAt;
       if (r.serverNow) state.clockOffset = r.serverNow - Date.now();
       setSaveStatus('All answers saved');
@@ -95,7 +96,7 @@ App.take = function take(testId, { preview = false, view = {} } = {}) {
       if (Date.now() - (lastLogged[type] || 0) < 10e3) return;
       lastLogged[type] = Date.now();
     }
-    return api('POST', `/api/my/attempts/${state.attempt.id}/events`, { clientId: CLIENT_ID, type, detail })
+    return api('POST', `/api/my/attempts/${state.attempt.id}/events`, { clientId: CLIENT_ID, type, detail }, { quiet: true })
       .then((r) => {
         if (r.violations !== undefined) state.violations = r.violations;
         if (r.status === 'locked') showLocked();
@@ -271,7 +272,7 @@ App.take = function take(testId, { preview = false, view = {} } = {}) {
     clearInterval(lockPoll);
     lockPoll = setInterval(async () => {
       try {
-        const s = await api('GET', `/api/my/attempts/${state.attempt.id}/status`);
+        const s = await api('GET', `/api/my/attempts/${state.attempt.id}/status`, undefined, { quiet: true });
         if (s.status === 'in_progress') {
           clearInterval(lockPoll);
           state.attempt.deadlineAt = s.deadlineAt;
@@ -743,6 +744,61 @@ App.take = function take(testId, { preview = false, view = {} } = {}) {
     );
     updateProgress();
     tick();
+    installSelectionReader();
+  }
+
+  // ------------------------------------------------------- read a selection
+  // Students who have read-aloud can highlight any part of the test (a
+  // sentence of the passage, one option) and hear just that part, instead of
+  // the whole item from the top. Uses the device voice.
+
+  let selectionReaderOn = false;
+  function installSelectionReader() {
+    if (selectionReaderOn || !state.acc.readAloud || !ttsSupported) return;
+    selectionReaderOn = true;
+    const btn = h('button', { class: 'btn btn-primary selection-read', type: 'button', hidden: true, 'aria-label': 'Read the highlighted text aloud' }, '🔊 Read this');
+    document.body.append(btn);
+    let text = '';
+    const hide = () => {
+      if (!reader?.speaking || btn.dataset.reading !== '1') btn.hidden = true;
+    };
+    const place = () => {
+      if (state.finished) return (btn.hidden = true);
+      const sel = window.getSelection();
+      const picked = sel && !sel.isCollapsed ? sel.toString().replace(/\s+/g, ' ').trim() : '';
+      const where = picked && sel.anchorNode && (sel.anchorNode.nodeType === 1 ? sel.anchorNode : sel.anchorNode.parentElement);
+      // Only text in the test itself, not inside an answer box.
+      if (!picked || picked.length < 2 || !where || !where.closest('main.test') || where.closest('input, textarea, select')) return hide();
+      text = picked.slice(0, 3000);
+      const r = sel.getRangeAt(0).getBoundingClientRect();
+      if (!r.width && !r.height) return hide();
+      btn.hidden = false;
+      const top = r.bottom + 8 + btn.offsetHeight > window.innerHeight ? r.top - btn.offsetHeight - 8 : r.bottom + 8;
+      btn.style.top = `${Math.max(8, top)}px`;
+      btn.style.left = `${Math.min(window.innerWidth - btn.offsetWidth - 8, Math.max(8, r.left + r.width / 2 - btn.offsetWidth / 2))}px`;
+    };
+    // Keep the selection when the button is pressed.
+    btn.addEventListener('pointerdown', (e) => e.preventDefault());
+    btn.addEventListener('click', () => {
+      if (btn.dataset.reading === '1') return reader.stop();
+      reader.speak(text, {
+        onStart: () => {
+          btn.dataset.reading = '1';
+          btn.textContent = '⏹ Stop';
+        },
+        onEnd: () => {
+          btn.dataset.reading = '';
+          btn.textContent = '🔊 Read this';
+          place();
+        },
+      });
+    });
+    let timer = null;
+    document.addEventListener('selectionchange', () => {
+      clearTimeout(timer);
+      timer = setTimeout(place, 250);
+    });
+    window.addEventListener('scroll', () => btn.dataset.reading !== '1' && (btn.hidden = true), { passive: true });
   }
 
   // ------------------------------------------------------------- submitting
@@ -787,7 +843,7 @@ App.take = function take(testId, { preview = false, view = {} } = {}) {
     closeRecorder();
     navigator.keyboard?.unlock?.();
     if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
-    document.querySelectorAll('.overlay, dialog').forEach((d) => d.remove());
+    document.querySelectorAll('.overlay, dialog, .selection-read').forEach((d) => d.remove());
     clear(
       app,
       previewBar(),
@@ -859,7 +915,7 @@ App.take = function take(testId, { preview = false, view = {} } = {}) {
       s.maxViolations && s.onLimit === 'lock' ? `If you leave ${s.maxViolations} times, the test is paused until your teacher unlocks it.` : null,
       s.maxViolations && s.onLimit === 'submit' ? `If you leave ${s.maxViolations} times, the test is submitted automatically.` : null,
       s.blockCopyPaste ? 'Copy and paste are turned off.' : null,
-      state.acc.readAloud ? 'You can press 🔊 Listen on any question to hear it.' : null,
+      state.acc.readAloud ? 'You can press 🔊 Listen on any question to hear it, or highlight part of the text with the mouse and press 🔊 Read this to hear just that part.' : null,
       state.acc.voiceAnswers ? 'You can answer out loud with 🎤. A small recorder window opens; allow the microphone the first time. Using it does not count as leaving the test.' : null,
     ].filter(Boolean);
 
@@ -928,7 +984,7 @@ App.take = function take(testId, { preview = false, view = {} } = {}) {
     every(async () => {
       if (state.finished || document.querySelector('.overlay-locked')) return;
       try {
-        const s = await api('GET', `/api/my/attempts/${state.attempt.id}/status`);
+        const s = await api('GET', `/api/my/attempts/${state.attempt.id}/status`, undefined, { quiet: true });
         state.attempt.deadlineAt = s.deadlineAt;
         state.clockOffset = s.serverNow - Date.now();
         state.violations = s.violations;

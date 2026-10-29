@@ -143,3 +143,58 @@ test("reads the audio tab's one-column JSON written under its old plain header",
   assert.deepEqual(db.get('audio', 'h1').parts, [{ fileId: 'f1', mime: 'audio/mpeg' }]);
   assert.deepEqual(sh.cells[0], ['id', 'provider', 'voice', 'chars', 'createdAt', 'parts'], 'no duplicate column added');
 });
+
+function memoryCache() {
+  const m = {};
+  return { getAll: (keys) => Object.fromEntries(keys.filter((k) => k in m).map((k) => [k, m[k]])), put: (k, v) => (m[k] = v), m };
+}
+
+function countReads(ss) {
+  let n = 0;
+  for (const sh of ss.sheets) {
+    const orig = sh.getRange.bind(sh);
+    sh.getRange = (...a) => (n++, orig(...a));
+  }
+  return () => n;
+}
+
+test('header cache: fewer reads, and writes stay correct even if columns were moved by hand', () => {
+  const ss = new FakeSpreadsheet();
+  const cache = memoryCache();
+  const first = new SheetStore(ss, cache);
+  first.insert('students', { id: 'a@s.org', name: 'A', extraTimePct: 25 });
+  assert.ok(cache.m.students, 'header remembered');
+
+  // A new request with the cache: reading needs no header read.
+  const reads = countReads(ss);
+  const second = new SheetStore(ss, cache);
+  assert.equal(second.get('students', 'a@s.org').extraTimePct, 25);
+  const withCache = reads();
+  const third = new SheetStore(ss);
+  third.get('students', 'a@s.org');
+  assert.ok(withCache < reads() - withCache, `cached read used fewer calls (${withCache} vs ${reads() - withCache})`);
+
+  // Someone swaps two columns in the Sheet; the cache still has the old order.
+  const sh = ss.getSheetByName('students');
+  const swap = (row) => ([row[1], row[5]] = [row[5], row[1]]);
+  sh.cells.forEach(swap);
+  const fourth = new SheetStore(ss, cache);
+  fourth.update('students', 'a@s.org', { name: 'Renamed' });
+  const fifth = new SheetStore(ss); // no cache: the truth
+  assert.equal(fifth.get('students', 'a@s.org').name, 'Renamed');
+  assert.equal(fifth.get('students', 'a@s.org').extraTimePct, 25, 'the write went into the right column');
+  fourth.insert('students', { id: 'b@s.org', name: 'B', extraTimePct: 50 });
+  assert.equal(fifth.get('students', 'b@s.org').extraTimePct, 50);
+  assert.equal(new SheetStore(ss, cache).get('students', 'b@s.org').name, 'B', 'the cache was corrected');
+});
+
+test('header cache: a deleted tab is recreated with its headers', () => {
+  const ss = new FakeSpreadsheet();
+  const cache = memoryCache();
+  new SheetStore(ss, cache).insert('classes', { id: 'c1', name: 'X' });
+  ss.sheets = ss.sheets.filter((s) => s.name !== 'classes');
+  const db = new SheetStore(ss, cache);
+  db.insert('classes', { id: 'c2', name: 'Y' });
+  assert.equal(ss.getSheetByName('classes').cells[0][0], 'id');
+  assert.equal(new SheetStore(ss).get('classes', 'c2').name, 'Y');
+});

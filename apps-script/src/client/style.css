@@ -323,3 +323,27 @@ select.blank-input { width: auto; border: 1px solid var(--line); border-radius: 
 .class-picks { display: flex; flex-wrap: wrap; gap: .4rem 1.2rem; margin-top: .4rem; }
 .join-card { width: min(520px, 100%); }
 .join-card .join-input { font: 700 1.4rem ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; letter-spacing: .08em; text-transform: uppercase; }
+
+.backup-list { margin: .4rem 0 0; padding-inline-start: 1.2rem; line-height: 1.7; }
+
+/* Floating "read the highlighted text" button */
+.selection-read { position: fixed; z-index: 40; box-shadow: 0 4px 14px rgb(0 0 0 / 25%); font-size: 1rem; }
+.selection-read[hidden] { display: none; }
+
+/* Loading feedback: a bar along the top and a spinner on the pressed control */
+html.is-loading body::before {
+  content: ''; position: fixed; inset: 0 0 auto 0; height: 3px; z-index: 200;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent);
+  background-size: 40% 100%; background-repeat: no-repeat;
+  animation: loading-bar 1.1s ease-in-out infinite;
+}
+html.is-loading, html.is-loading * { cursor: progress; }
+@keyframes loading-bar { from { background-position: -40% 0; } to { background-position: 140% 0; } }
+.is-busy { position: relative; pointer-events: none; opacity: .75; }
+.btn.is-busy, a.is-busy, summary.is-busy { padding-inline-end: 2.1em; }
+.btn.is-busy::after, a.is-busy::after, summary.is-busy::after {
+  content: ''; position: absolute; inset-inline-end: .7em; top: 50%; width: .9em; height: .9em; margin-top: -.45em;
+  border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin .7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { html.is-loading body::before, .is-busy::after { animation-duration: 3s; } }

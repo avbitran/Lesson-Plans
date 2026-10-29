@@ -45,7 +45,9 @@ const html = src('client', 'index.html')
   .replace('<!DOCTYPE html>', `<!DOCTYPE html>\n<!-- ${banner('pages; already included in Code.gs')} -->`);
 
 // The pages ride along inside Code.gs, so there is only one file to paste.
-const code = `// ${banner('the whole app: paste this into Code.gs')}\n\n${server}\n// ===== Index.html (the pages) =====\nconst INDEX_HTML = ${JSON.stringify(html)};\n`;
+// Changes with every build, so the app notices new code (and backs up first).
+const buildId = require('node:crypto').createHash('sha256').update(server + html).digest('hex').slice(0, 12);
+const code = `// ${banner('the whole app: paste this into Code.gs')}\n\nconst BUILD_ID = '${buildId}';\n\n${server}\n// ===== Index.html (the pages) =====\nconst INDEX_HTML = ${JSON.stringify(html)};\n`;
 
 fs.mkdirSync(path.join(__dirname, 'dist'), { recursive: true });
 fs.writeFileSync(path.join(__dirname, 'dist', 'Code.gs'), code);

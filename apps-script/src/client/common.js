@@ -16,7 +16,59 @@ const MULTI_ACCOUNT_HELP =
   'If you are signed in to more than one Google account in this browser, Google often fails to answer. ' +
   'Open the app in an Incognito window (Ctrl+Shift+N) or a Chrome profile with only your school account.';
 
-function api(method, url, body) {
+// ----- "something is happening" feedback
+// The button or link just pressed shows a spinner until its request answers,
+// and a thin bar runs along the top while anything is loading. Background
+// calls (autosave, status checks) pass { quiet: true } and show nothing.
+const Busy = { n: 0, pressed: null, pressedAt: 0, barTimer: null };
+const notePress = (e) => {
+  const el = e.target && e.target.closest && e.target.closest('button, a, summary, select, input[type=checkbox]');
+  if (el) Object.assign(Busy, { pressed: el, pressedAt: Date.now() });
+};
+document.addEventListener('pointerdown', notePress, true);
+document.addEventListener('keydown', (e) => (e.key === 'Enter' || e.key === ' ') && notePress(e), true);
+document.addEventListener('change', notePress, true);
+
+function busyStart() {
+  Busy.n++;
+  if (Busy.n === 1) {
+    clearTimeout(Busy.barTimer);
+    // Only show the bar if the wait is noticeable.
+    Busy.barTimer = setTimeout(() => document.documentElement.classList.add('is-loading'), 150);
+  }
+  const el = Date.now() - Busy.pressedAt < 1500 ? Busy.pressed : null;
+  Busy.pressed = null;
+  if (el && el.isConnected && !el.classList.contains('is-busy')) {
+    el.classList.add('is-busy');
+    el.setAttribute('aria-busy', 'true');
+    return el;
+  }
+  return null;
+}
+
+function busyEnd(el) {
+  Busy.n = Math.max(0, Busy.n - 1);
+  if (!Busy.n) {
+    clearTimeout(Busy.barTimer);
+    document.documentElement.classList.remove('is-loading');
+  }
+  if (el) {
+    el.classList.remove('is-busy');
+    el.removeAttribute('aria-busy');
+  }
+}
+
+function api(method, url, body, { quiet = false } = {}) {
+  // Data the server sent along with the page, for the first screen.
+  const key = `${method} ${url}`;
+  // Only right after the page opens; later it could be out of date.
+  if (BOOT.prefetch && performance.now() > 20000) BOOT.prefetch = null;
+  if (BOOT.prefetch && key in BOOT.prefetch) {
+    const data = BOOT.prefetch[key];
+    delete BOOT.prefetch[key];
+    return Promise.resolve(data);
+  }
+  const el = quiet ? null : busyStart();
   return new Promise((resolve, reject) => {
     // Google sometimes never answers at all (most often with several
     // accounts signed in), so don't wait forever.
@@ -38,7 +90,7 @@ function api(method, url, body) {
       }))
       .withFailureHandler(done((e) => reject(new ApiError(0, `Problem reaching Google: ${(e && e.message) || e}. ${MULTI_ACCOUNT_HELP}`))))
       .rpc(method, url, body === undefined ? null : body);
-  });
+  }).finally(() => quiet || busyEnd(el));
 }
 
 // Small DOM builder. Text always goes in as text, never as HTML.

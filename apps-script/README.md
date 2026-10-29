@@ -5,7 +5,7 @@ A free online test system that runs entirely in a school Google account.
 - **Students sign in with their school Google account.** No passwords. They open one link.
 - **Classes.** Students join with a **class code**, are **imported from Google Classroom**, or are added by email.
 - **Several teachers.** Teachers at the same school share one app, each with their own classes, tests and students. Teachers at other schools get their own copy from a link.
-- **Read-aloud.** A 🔊 Listen button on every question, the instructions and reading passages, with a speed control. Choose the voice for each test: the free device voice, a **natural Google voice**, or your own **Chatterbox** voice server. Natural-voice audio is made once and saved in your Drive.
+- **Read-aloud.** A 🔊 Listen button on every question, the instructions and reading passages, with a speed control. Students can also **highlight part of a text** and press **🔊 Read this** to hear just that part. Choose the voice for each test: the free device voice, a **natural Google voice**, or your own **Chatterbox** voice server. Natural-voice audio is made once and saved in your Drive.
 - **Voice answers.** Students can record a spoken answer to any question with 🎤. You listen to it while grading.
 - **Per-student accommodations.** Read-aloud, voice answers, and extra time (+25% to +100%), set per student, or read-aloud/voice answers for a whole test.
 - **Bagrut-style questions.** Multiple choice with one or several correct answers, **fill in the blanks** (several blanks per sentence, an optional word bank, typed or chosen from a drop-down), **matching**, **Module E vocabulary** (numbered items matched to definitions), short answers marked automatically, open answers, and reading passages. Hebrew and Arabic text is shown right-to-left automatically.
@@ -62,9 +62,21 @@ Read-aloud, voice answers and extra time are set per student, and every teacher 
 
 ---
 
-## Backing up
+## Backups
 
-Everything is in your Google Sheet (answers, scores, the activity log) and a Drive folder (voice answers). To back up, open the Sheet and use **File → Make a copy**. The copy also carries the app's code, so don't deploy it; it's just a backup. Updates never delete data: they only add columns or tabs.
+The app backs itself up. Each backup is a **separate Google Sheet** with a copy of every data tab (students, classes, tests, answers, marks, the activity log), saved in the Drive folder **Online Tests – backups**. Backups contain no app code, so they can't run as a second app.
+
+- **Every night**, kept for 30 days. On by default; switch it in **Settings → Backups**.
+- **Before every update.** The first time the app runs new code, it backs up before anything else touches the data. These are kept until you delete them.
+- **Back up now** in **Settings → Backups**, any time.
+
+Voice answers and read-aloud audio are files in Drive. Updates never delete them.
+
+**Restoring** (Settings → Backups → *How to restore* has the same steps):
+1. Click **Back up now**, so the current state is kept too.
+2. Open the backup you want. Right-click the tab you need (for example `attempts`) → **Copy to** → **Existing spreadsheet** → choose the app's Sheet.
+3. In the app's Sheet, rename the broken tab (for example to `attempts old`) and rename the copied tab to the exact original name (`attempts`).
+4. Reload the app.
 
 ## Updating the app
 

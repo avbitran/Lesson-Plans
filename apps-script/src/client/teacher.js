@@ -1278,11 +1278,58 @@ async function teachersPage() {
 
 // ================================================================== settings
 
+// Backups: daily (kept 30 days), before every update, and on demand.
+function backupsCard(b) {
+  const box = h('div', { class: 'card form', id: 'backups' });
+  const draw = (b) => {
+    const daily = h('input', { type: 'checkbox', checked: b.daily });
+    daily.addEventListener('change', async () => {
+      try {
+        draw(await api('PUT', '/api/backups', { daily: daily.checked }));
+        toast(daily.checked ? 'Daily backups are on.' : 'Daily backups are off.', 'ok');
+      } catch (e) {
+        daily.checked = !daily.checked;
+        toast(e.message, 'error');
+      }
+    });
+    const now = h('button', { class: 'btn btn-primary' }, 'Back up now');
+    now.addEventListener('click', async () => {
+      try {
+        const r = await api('POST', '/api/backups');
+        draw(r);
+        toast(`Backed up: ${r.made.name}`, 'ok');
+      } catch (e) {
+        toast(e.message, 'error');
+      }
+    });
+    clear(
+      box,
+      h('h2', { text: 'Backups' }),
+      h('p', { class: 'muted', text: `Each backup is a separate Google Sheet with a copy of all students, classes, tests, answers, marks and the activity log. The app makes one every night (kept for ${b.keepDays} days) and one automatically before an update changes anything. Voice answers stay in their Drive folder and are never deleted by an update.` }),
+      b.error ? h('p', { class: 'error', text: `${b.error} Update the app’s manifest (appsscript.json) as in the update instructions and run "authorize" once.` }) : null,
+      h('label', { class: 'check' }, daily, `Back up every night (kept for ${b.keepDays} days)`),
+      h('div', { class: 'row' }, now, h('span', { class: 'muted', text: b.lastBackup ? `Last backup: ${fmtDate(b.lastBackup)}` : 'No backup yet.' }), h('a', { href: b.folderUrl, target: '_blank', rel: 'noopener' }, 'Open the backups folder')),
+      b.backups.length
+        ? h('details', {}, h('summary', { text: `Recent backups (${b.backups.length})` }), h('ul', { class: 'backup-list' }, b.backups.slice(0, 20).map((x) => h('li', {}, h('a', { href: x.url, target: '_blank', rel: 'noopener', text: x.name })))))
+        : null,
+      h('details', {}, h('summary', { text: 'How to restore from a backup' }), h('ol', {},
+        h('li', { text: 'Make one more backup now, so the current state is kept too.' }),
+        h('li', { text: 'Open the backup you want. Right-click the tab you need (for example attempts) → Copy to → Existing spreadsheet → choose the app’s Sheet.' }),
+        h('li', { text: 'In the app’s Sheet, rename the broken tab (for example to "attempts old") and rename the copied tab to the exact original name ("attempts"). Do the same for any other tab you need.' }),
+        h('li', { text: 'Reload the app. Nothing else is needed: the app finds its data by the tab and column names.' }),
+      )),
+    );
+  };
+  draw(b);
+  return box;
+}
+
 async function settingsPage() {
-  const settings = await api('GET', '/api/settings');
+  const [settings, backups] = await Promise.all([api('GET', '/api/settings'), api('GET', '/api/backups').catch((e) => ({ error: e.message, backups: [], keepDays: 30, daily: false, folderUrl: '#' }))]);
   const recorderUrl = h('input', { value: settings.recorderUrl, class: 'grow' });
   page(
     h('div', { class: 'page-head' }, h('h1', { text: 'Settings' })),
+    backupsCard(backups),
     h(
       'div',
       { class: 'card form' },

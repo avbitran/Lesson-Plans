@@ -412,3 +412,17 @@ test('Module E vocabulary (numbered items): per-match points, key hidden from st
   assert.equal(core.autoGrade({ questions: [saved] }, { m1: [3, 0, 4] }, new Set()).m1.auto, 6);
   assert.throws(() => core.normalizeTest({ title: 'x', questions: [{ type: 'vocab', items: ['only one'], pairs: [{ text: 't', answer: 0 }] }] }), /at least two items/);
 });
+
+test('backups are admin-only', () => {
+  const calls = [];
+  const backups = { status: () => ({ daily: true, backups: [] }), now: () => (calls.push('now'), { name: 'b' }), setDaily: (on) => calls.push(on) };
+  const { teacher, otherTeacher, call, api } = setup();
+  // setup() has no backups; give the handler one through a second api with the same store
+  const { createApi } = require('../src/server/Api.js');
+  const a2 = createApi({ db: new MemoryStore(), ownerEmail: 'teacher@school.org', withLock: (f) => f(), backups });
+  assert.equal(a2.handle('POST', '/api/backups', {}, teacher).made.name, 'b');
+  a2.handle('PUT', '/api/backups', { daily: false }, teacher);
+  assert.deepEqual(calls, ['now', false]);
+  assert.throws(() => a2.handle('GET', '/api/backups', {}, otherTeacher('x@school.org')), /Only the admin/);
+  assert.ok(call && api);
+});

@@ -202,6 +202,7 @@ function env_(db) {
     ownerEmail: Session.getEffectiveUser().getEmail().toLowerCase(),
     classroom: classroom_(),
     makeInstallCopy: makeInstallCopy_,
+    backups: backupsEnv_(),
     withLock: withLock_,
     hash: (text) =>
       Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, text, Utilities.Charset.UTF_8)
@@ -379,24 +380,175 @@ function currentUser_(db, ownerEmail) {
 
 // The one-time upgrade from the single-teacher version (see Api.migrate).
 const SCHEMA_VERSION = '2';
+
+// The first visit after new code is pasted backs everything up before any
+// upgrade touches the data. BUILD_ID is set by build.js.
 function migrateOnce_(db, env) {
   const props = PropertiesService.getScriptProperties();
-  if (props.getProperty(propKey_('SCHEMA_VERSION')) === SCHEMA_VERSION) return;
+  const build = typeof BUILD_ID === 'undefined' ? 'dev' : BUILD_ID;
+  if (props.getProperty(propKey_('SCHEMA_VERSION')) === SCHEMA_VERSION && props.getProperty(propKey_('BUILD_ID')) === build) return;
   withLock_(() => {
-    if (props.getProperty(propKey_('SCHEMA_VERSION')) === SCHEMA_VERSION) return;
-    createApi(env).migrate();
-    props.setProperty(propKey_('SCHEMA_VERSION'), SCHEMA_VERSION);
+    if (props.getProperty(propKey_('BUILD_ID')) !== build) {
+      const hasData = db.all('students', true).length || db.all('tests', true).length;
+      if (hasData) {
+        try {
+          backupNow_('before update');
+        } catch (e) {
+          // Don't block the app; the error is visible in Settings → Backups.
+          props.setProperty(propKey_('BACKUP_ERROR'), String((e && e.message) || e).slice(0, 300));
+        }
+      }
+      props.setProperty(propKey_('BUILD_ID'), build);
+    }
+    if (props.getProperty(propKey_('SCHEMA_VERSION')) !== SCHEMA_VERSION) {
+      createApi(env).migrate();
+      props.setProperty(propKey_('SCHEMA_VERSION'), SCHEMA_VERSION);
+    }
   });
 }
 
+// ------------------------------------------------------------------ backups
+// A backup is a new, separate Google Sheet with copies of the data tabs (no
+// app code inside), in the "Online Tests – backups" folder. Daily backups are
+// kept for BACKUP_KEEP days; manual and before-update backups are kept until
+// you delete them. Voice answers and read-aloud audio are files in Drive and
+// are never deleted by an update.
+const BACKUP_KEEP = 30;
+
+function backupsFolder_() {
+  return folder_('BACKUPS_FOLDER_ID', 'Online Tests – backups');
+}
+
+function backupNow_(reason) {
+  const ss = spreadsheet_();
+  const stamp = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm');
+  const name = `Online Tests backup ${stamp} (${reason})`;
+  const dest = SpreadsheetApp.create(name);
+  const blank = dest.getSheets()[0];
+  let tabs = 0;
+  for (const sh of ss.getSheets()) {
+    if (!DATA_TABS.includes(sh.getName())) continue;
+    sh.copyTo(dest).setName(sh.getName());
+    tabs++;
+  }
+  if (tabs) dest.deleteSheet(blank);
+  const file = DriveApp.getFileById(dest.getId());
+  file.moveTo(backupsFolder_());
+  const props = PropertiesService.getScriptProperties();
+  props.setProperty(propKey_('LAST_BACKUP'), String(Date.now()));
+  props.deleteProperty(propKey_('BACKUP_ERROR'));
+  pruneBackups_();
+  return { name, url: dest.getUrl() };
+}
+
+function pruneBackups_() {
+  const cutoff = Date.now() - BACKUP_KEEP * 24 * 3600e3;
+  const it = backupsFolder_().getFiles();
+  while (it.hasNext()) {
+    const f = it.next();
+    if (f.getName().indexOf('(daily)') >= 0 && f.getDateCreated().getTime() < cutoff) f.setTrashed(true);
+  }
+}
+
+function listBackups_() {
+  const out = [];
+  const it = backupsFolder_().getFiles();
+  while (it.hasNext()) {
+    const f = it.next();
+    out.push({ name: f.getName(), url: f.getUrl(), createdAt: f.getDateCreated().getTime() });
+  }
+  return out.sort((a, b) => b.createdAt - a.createdAt).slice(0, 60);
+}
+
+// Runs every night (the trigger below calls it).
+function dailyBackup() {
+  backupNow_('daily');
+}
+
+function backupTrigger_() {
+  return ScriptApp.getProjectTriggers().find((t) => t.getHandlerFunction() === 'dailyBackup') || null;
+}
+
+function setDailyBackups_(on) {
+  const props = PropertiesService.getScriptProperties();
+  const t = backupTrigger_();
+  if (on && !t) ScriptApp.newTrigger('dailyBackup').timeBased().everyDays(1).atHour(2).create();
+  if (!on && t) ScriptApp.deleteTrigger(t);
+  props.setProperty(propKey_('DAILY_BACKUPS'), on ? 'on' : 'off');
+}
+
+// Daily backups are on unless the admin turned them off. Checked once per
+// spreadsheet (and again if it failed, e.g. before the permission existed).
+function ensureDailyBackups_() {
+  const props = PropertiesService.getScriptProperties();
+  const state = props.getProperty(propKey_('DAILY_BACKUPS'));
+  if (state === 'on' || state === 'off') return;
+  try {
+    setDailyBackups_(true);
+  } catch (e) {
+    props.setProperty(propKey_('BACKUP_ERROR'), 'Daily backups could not be turned on: ' + String((e && e.message) || e).slice(0, 250));
+  }
+}
+
+function backupsEnv_() {
+  return {
+    status() {
+      const props = PropertiesService.getScriptProperties();
+      let daily = props.getProperty(propKey_('DAILY_BACKUPS')) === 'on';
+      try {
+        daily = !!backupTrigger_();
+      } catch (e) {
+        // No permission to look at triggers yet.
+      }
+      const last = Number(props.getProperty(propKey_('LAST_BACKUP'))) || null;
+      return { daily, lastBackup: last, error: props.getProperty(propKey_('BACKUP_ERROR')) || '', folderUrl: backupsFolder_().getUrl(), backups: listBackups_(), keepDays: BACKUP_KEEP };
+    },
+    now: () => backupNow_('manual'),
+    setDaily: setDailyBackups_,
+  };
+}
+
+// Header rows remembered between requests (6 hours, the most the cache keeps),
+// per spreadsheet and code version.
+function headerCache_() {
+  const cache = CacheService.getScriptCache();
+  const prefix = 'hdr:' + spreadsheet_().getId() + ':' + (typeof BUILD_ID === 'undefined' ? 'dev' : BUILD_ID) + ':';
+  return {
+    getAll(tables) {
+      const got = cache.getAll(tables.map((t) => prefix + t));
+      const out = {};
+      tables.forEach((t) => {
+        if (got[prefix + t]) out[t] = got[prefix + t];
+      });
+      return out;
+    },
+    put: (table, value) => cache.put(prefix + table, value, 21600),
+  };
+}
+
+function store_() {
+  return new SheetStore(spreadsheet_(), headerCache_());
+}
+
 function bootInfo() {
-  const db = new SheetStore(spreadsheet_());
+  const db = store_();
   const env = env_(db);
   migrateOnce_(db, env);
   const user = currentUser_(db, env.ownerEmail);
+  if (user.admin) ensureDailyBackups_();
+  // The first screen's data comes with the page, saving one round trip.
+  const prefetch = {};
+  try {
+    const api = createApi(env);
+    if (user.role === 'teacher') prefetch['GET /api/tests'] = api.handle('GET', '/api/tests', null, user);
+    else if (user.role === 'student') prefetch['GET /api/my/tests'] = api.handle('GET', '/api/my/tests', null, user);
+  } catch (e) {
+    // The page will ask for it normally.
+  }
   return {
     user,
     recorderUrl: PropertiesService.getScriptProperties().getProperty('RECORDER_URL') || DEFAULT_RECORDER_URL,
+    prefetch,
   };
 }
 
@@ -404,10 +556,11 @@ function bootInfo() {
 // nested nulls), and a string arrives exactly as sent.
 function rpc(method, path, body) {
   try {
-    const db = new SheetStore(spreadsheet_());
+    const db = store_();
     const env = env_(db);
     migrateOnce_(db, env);
     const user = currentUser_(db, env.ownerEmail);
+    if (user.admin) ensureDailyBackups_();
     const api = createApi(env);
     // Teacher edits are rare; serialising them avoids row shifts mid-write.
     // Making audio and trying voices take long and only add rows, so they

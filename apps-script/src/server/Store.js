@@ -70,10 +70,32 @@ function decodeField(f, cells) {
 }
 
 class SheetStore {
-  constructor(ss) {
+  // headerCache (optional): remembers each tab's header row between requests
+  // (Apps Script's CacheService), saving two Sheets calls per tab. Its keys
+  // must change whenever the code changes, since a new version may add columns.
+  constructor(ss, headerCache) {
     this.ss = ss;
     this.layouts = {};
     this.cache = {};
+    this.headerCache = headerCache || null;
+    this.cachedHeaders = null;
+  }
+
+  cachedHeader(table) {
+    if (!this.headerCache) return null;
+    if (!this.cachedHeaders) {
+      try {
+        this.cachedHeaders = this.headerCache.getAll(Object.keys(SCHEMAS)) || {};
+      } catch (e) {
+        this.cachedHeaders = {};
+      }
+    }
+    const v = this.cachedHeaders[table];
+    try {
+      return v ? JSON.parse(v) : null;
+    } catch (e) {
+      return null;
+    }
   }
 
   // Where each field lives in this table's tab. Creates the tab, and any
@@ -82,12 +104,24 @@ class SheetStore {
     if (this.layouts[table]) return this.layouts[table];
     const fields = PARSED[table];
     let sh = this.ss.getSheetByName(table);
+    let header = null;
+    let fromCache = false;
     if (!sh) {
       sh = this.ss.insertSheet(table);
       sh.setFrozenRows(1);
+      header = [];
+    } else {
+      // A cached header is only trusted if it already has every column.
+      const cached = this.cachedHeader(table);
+      if (cached && fields.every((f) => f.headers.every((n) => cached.indexOf(n) >= 0 || (f.type === 'json' && f.width === 1 && cached.indexOf(f.name) >= 0)))) {
+        header = cached;
+        fromCache = true;
+      }
     }
-    const lastCol = sh.getLastColumn();
-    const header = lastCol > 0 ? sh.getRange(1, 1, 1, lastCol).getValues()[0].map(String) : [];
+    if (!header) {
+      const lastCol = sh.getLastColumn();
+      header = lastCol > 0 ? sh.getRange(1, 1, 1, lastCol).getValues()[0].map(String) : [];
+    }
     const at = {};
     header.forEach((name, i) => {
       if (name && !(name in at)) at[name] = i + 1;
@@ -107,17 +141,50 @@ class SheetStore {
         if (m.f.type === 'str' || m.f.type === 'json') sh.getRange(1, first + i, sh.getMaxRows(), 1).setNumberFormat('@');
       });
     }
+    if (this.headerCache) {
+      const full = header.concat(missing.map((m) => m.name));
+      try {
+        this.headerCache.put(table, JSON.stringify(full));
+      } catch (e) {
+        // The cache is only a speed-up.
+      }
+    }
     const cols = {};
     for (const f of fields) cols[f.name] = f.headers.map((n) => at[n]);
     const lightCols = fields.filter((f) => f.type !== 'json').map((f) => cols[f.name][0]);
     const width = Math.max(header.length + missing.length, 1);
-    const l = { sh, fields, cols, width, lightWidth: Math.max(...lightCols), idCol: cols.id[0] };
+    const l = { sh, fields, cols, width, lightWidth: Math.max(...lightCols), idCol: cols.id[0], fromCache, header: header.concat(missing.map((m) => m.name)) };
     this.layouts[table] = l;
     return l;
   }
 
   sheet(table) {
     return this.layout(table).sh;
+  }
+
+  // Before writing, make sure a cached header still matches the sheet (in
+  // case someone moved columns by hand); if not, map the columns again.
+  fresh(table) {
+    const l = this.layout(table);
+    if (!l.fromCache) return l;
+    const lastCol = l.sh.getLastColumn();
+    const real = lastCol > 0 ? l.sh.getRange(1, 1, 1, lastCol).getValues()[0].map(String) : [];
+    if (real.length === l.header.length && real.every((x, i) => x === l.header[i])) {
+      l.fromCache = false;
+      return l;
+    }
+    delete this.layouts[table];
+    this.cachedHeaders = Object.assign({}, this.cachedHeaders, { [table]: JSON.stringify(real) });
+    const saved = this.headerCache;
+    this.headerCache = null; // map from the sheet itself this time
+    try {
+      return this.layout(table);
+    } finally {
+      this.headerCache = saved;
+      try {
+        if (saved) saved.put(table, JSON.stringify(this.layouts[table].header));
+      } catch (e) {}
+    }
   }
 
   rowToObject(table, row, light) {
@@ -171,7 +238,7 @@ class SheetStore {
 
   insert(table, obj) {
     const rec = Object.assign({}, obj, { id: obj.id || newId() });
-    this.sheet(table).appendRow(this.objectToRow(table, rec));
+    this.fresh(table).sh.appendRow(this.objectToRow(table, rec));
     this.cache = {};
     return rec;
   }
@@ -179,6 +246,7 @@ class SheetStore {
   // Writes only the given fields, so an autosave and a warning arriving at
   // the same moment never overwrite each other.
   update(table, id, fields) {
+    this.fresh(table);
     const r = this.rowIndex(table, id);
     if (r < 0) throw new HttpError(404, 'Record not found.');
     const l = this.layout(table);
@@ -194,13 +262,14 @@ class SheetStore {
   }
 
   remove(table, id) {
+    this.fresh(table);
     const r = this.rowIndex(table, id);
     if (r > 0) this.sheet(table).deleteRow(r);
     this.cache = {};
   }
 
   removeWhere(table, pred) {
-    const l = this.layout(table);
+    const l = this.fresh(table);
     const n = l.sh.getLastRow() - 1;
     if (n <= 0) return;
     const rows = l.sh.getRange(2, 1, n, l.lightWidth).getValues();
