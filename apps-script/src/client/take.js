@@ -319,7 +319,8 @@ App.take = function take(testId, { preview = false, view = {} } = {}) {
   }
 
   const answerable = () => state.test.questions.filter((q) => q.type !== 'section');
-  const isAnswered = (q) => state.answers[q.id] !== undefined || !!state.recordings[q.id];
+  const filled = (v) => (Array.isArray(v) ? v.some((x) => (typeof x === 'string' ? x.trim() : x !== undefined && x !== null)) : v !== undefined);
+  const isAnswered = (q) => filled(state.answers[q.id]) || !!state.recordings[q.id];
 
   function updateProgress() {
     if (!progressEl) return;
@@ -327,10 +328,13 @@ App.take = function take(testId, { preview = false, view = {} } = {}) {
     progressEl.textContent = `${qs.filter(isAnswered).length} / ${qs.length} answered`;
   }
 
+  // The server sends the exact text to read (q.speech) and, when the teacher
+  // prepared a natural voice, the audio for it (q.audio).
   function speakText(q) {
+    if (q.speech) return q.speech;
     const parts = [q.title, q.prompt];
     if (q.multiple) parts.push(`Choose ${q.choose} answers.`);
-    if (q.type === 'match') {
+    if (q.type === 'vocab') {
       parts.push('The items are:');
       q.items.forEach((it, i) => parts.push(`${i + 1}. ${it}.`));
       parts.push('The definitions are:');
@@ -340,12 +344,13 @@ App.take = function take(testId, { preview = false, view = {} } = {}) {
     return parts.filter(Boolean).join('. \n');
   }
 
-  function listenButton(text, card) {
-    if (!state.acc.readAloud || !ttsSupported) return null;
+  function listenButton(text, card, audioId) {
+    if (!state.acc.readAloud || (!ttsSupported && !audioId)) return null;
     const btn = h('button', { class: 'btn btn-listen', type: 'button', 'aria-label': 'Read aloud' }, '🔊 Listen');
     btn.addEventListener('click', () => {
       if (card.classList.contains('reading')) return reader.stop();
       reader.speak(text, {
+        audioId,
         onStart: () => {
           card.classList.add('reading');
           btn.textContent = '⏹ Stop';
@@ -457,15 +462,15 @@ App.take = function take(testId, { preview = false, view = {} } = {}) {
     updateProgress();
   }
 
-  // Matching: the numbered items, then each definition with a dropdown for
+  // Module E vocabulary: the numbered items, then each definition with a dropdown for
   // the item's number. An item picked for one definition is greyed out in the
   // others, as on paper each item is used once.
-  function matchBlock(q) {
+  function vocabBlock(q) {
     const picks = q.pairs.map((p, k) => (Array.isArray(state.answers[q.id]) && Number.isInteger(state.answers[q.id][k]) ? state.answers[q.id][k] : null));
     const selects = q.pairs.map((p, k) =>
       h(
         'select',
-        { class: 'match-select', 'aria-label': `Item number for: ${p.text}` },
+        { class: 'vocab-select', 'aria-label': `Item number for: ${p.text}` },
         h('option', { value: '' }, '—'),
         q.items.map((it, i) => h('option', { value: i, selected: picks[k] === i }, String(i + 1))),
       ),
@@ -484,9 +489,9 @@ App.take = function take(testId, { preview = false, view = {} } = {}) {
     sync();
     return h(
       'div',
-      { class: 'match' },
-      h('ol', { class: 'match-items' }, q.items.map((it) => h('li', { text: it }))),
-      h('div', { class: 'match-pairs' }, q.pairs.map((p, k) => h('label', { class: 'match-row' }, selects[k], h('span', { text: p.text })))),
+      { class: 'vocab' },
+      h('ol', { class: 'vocab-items' }, q.items.map((it) => h('li', { text: it }))),
+      h('div', { class: 'vocab-pairs' }, q.pairs.map((p, k) => h('label', { class: 'vocab-row' }, selects[k], h('span', { text: p.text })))),
     );
   }
 
@@ -513,7 +518,88 @@ App.take = function take(testId, { preview = false, view = {} } = {}) {
       'div',
       {},
       hint,
-      h('div', { class: 'options', role: 'group' }, q.options.map((o, i) => h('label', { class: 'option' }, boxes[i], h('span', { class: 'letter', text: LETTERS[i] }), h('span', { text: o })))),
+      h('div', { class: 'options', role: 'group' }, q.options.map((o, i) => h('label', { class: 'option' }, boxes[i], h('span', { class: 'letter', text: LETTERS[i] }), h('span', { dir: 'auto', text: o })))),
+    );
+  }
+
+  // Fill in the blanks: the text with a box (or drop-down) in place of each
+  // {}. Words from the word bank are crossed out once used.
+  function blanksWidget(q) {
+    const vals = Array.from({ length: q.blankCount }, (_, i) => (Array.isArray(state.answers[q.id]) && state.answers[q.id][i]) || '');
+    const norm = (x) => String(x || '').trim().toLowerCase();
+    const chips = (q.wordBank || []).map((w) => h('span', { class: 'chip', dir: 'auto', text: w }));
+    const markUsed = () => chips.forEach((c, i) => c.classList.toggle('used', vals.some((v) => norm(v) === norm(q.wordBank[i]))));
+    const set = (i, v) => {
+      vals[i] = v;
+      markUsed();
+      changed(q.id, vals.some((x) => x.trim()) ? vals.slice() : undefined);
+    };
+    let k = 0;
+    const lines = q.prompt.split('\n').map((line) => {
+      const bits = line.split('{}');
+      const row = h('div', { class: 'blank-line', dir: 'auto' });
+      bits.forEach((text, j) => {
+        if (text) row.append(text);
+        if (j === bits.length - 1) return;
+        const i = k++;
+        const label = `Blank ${i + 1}`;
+        row.append(
+          q.dropdown
+            ? h(
+                'select',
+                { class: 'blank-input', 'aria-label': label, onchange: (e) => (set(i, e.target.value), save()) },
+                h('option', { value: '' }, '—'),
+                q.wordBank.map((w) => h('option', { value: w, selected: vals[i] === w }, w)),
+              )
+            : h('input', {
+                class: 'blank-input',
+                dir: 'auto',
+                value: vals[i],
+                spellcheck: 'false',
+                autocomplete: 'off',
+                'aria-label': label,
+                oninput: (e) => set(i, e.target.value),
+                onblur: save,
+              }),
+        );
+      });
+      return row;
+    });
+    markUsed();
+    return h('div', { class: 'blanks' }, chips.length ? h('div', { class: 'word-bank', 'aria-label': 'Word bank' }, chips) : null, lines);
+  }
+
+  // Matching: a drop-down of lettered choices next to each item.
+  function matchWidget(q) {
+    const vals = q.left.map((_, i) => (Array.isArray(state.answers[q.id]) && state.answers[q.id][i]) || '');
+    return h(
+      'div',
+      { class: 'match' },
+      h(
+        'ol',
+        { class: 'match-items' },
+        q.left.map((l, i) =>
+          h(
+            'li',
+            {},
+            h('span', { class: 'match-left', dir: 'auto', text: l }),
+            h(
+              'select',
+              {
+                'aria-label': `Match for ${l}`,
+                onchange: (e) => {
+                  vals[i] = e.target.value;
+                  changed(q.id, vals.some(Boolean) ? vals.slice() : undefined);
+                  save();
+                },
+              },
+              h('option', { value: '' }, 'Choose…'),
+              q.right.map((r, j) => h('option', { value: r, selected: vals[i] === r }, `${LETTERS[j]}. ${r}`)),
+            ),
+          ),
+        ),
+      ),
+      h('div', { class: 'match-choices' }, h('strong', { text: 'Choices' }), h('ol', { type: 'A' }, q.right.map((r) => h('li', { dir: 'auto', text: r })))),
     );
   }
 
@@ -521,8 +607,8 @@ App.take = function take(testId, { preview = false, view = {} } = {}) {
     const card = h('section', { class: `q q-${q.type}`, id: `q-${q.id}` });
     if (q.type === 'section') {
       card.append(
-        h('div', { class: 'q-head' }, q.title ? h('h2', { text: q.title }) : null, listenButton(speakText(q), card)),
-        q.prompt ? h('div', { class: 'passage', text: q.prompt }) : null,
+        h('div', { class: 'q-head' }, q.title ? h('h2', { dir: 'auto', text: q.title }) : null, listenButton(speakText(q), card, q.audio)),
+        q.prompt ? h('div', { class: 'passage', dir: 'auto', text: q.prompt }) : null,
       );
       return card;
     }
@@ -532,13 +618,22 @@ App.take = function take(testId, { preview = false, view = {} } = {}) {
         'div',
         { class: 'q-head' },
         h('span', { class: 'q-num', text: number }),
-        h('div', { class: 'q-text' }, q.title ? h('strong', { text: q.title }) : null, h('div', { class: 'prompt', text: q.prompt })),
+        h(
+          'div',
+          { class: 'q-text' },
+          q.title ? h('strong', { dir: 'auto', text: q.title }) : null,
+          q.type === 'blanks' || !q.prompt ? null : h('div', { class: 'prompt', dir: 'auto', text: q.prompt }),
+        ),
         h('span', { class: 'q-points', text: `${q.points} pt${q.points === 1 ? '' : 's'}` }),
-        listenButton(speakText(q), card),
+        listenButton(speakText(q), card, q.audio),
       ),
     );
-    if (q.type === 'match') {
-      card.append(matchBlock(q));
+    if (q.type === 'blanks') {
+      card.append(blanksWidget(q));
+    } else if (q.type === 'match') {
+      card.append(matchWidget(q));
+    } else if (q.type === 'vocab') {
+      card.append(vocabBlock(q));
     } else if (q.type === 'mc' && q.multiple) {
       card.append(multipleChoices(q));
     } else if (q.type === 'mc') {
@@ -552,7 +647,7 @@ App.take = function take(testId, { preview = false, view = {} } = {}) {
               { class: 'option' },
               h('input', { type: 'radio', name: `mc-${q.id}`, value: i, checked: state.answers[q.id] === i, onchange: () => changed(q.id, i) }),
               h('span', { class: 'letter', text: LETTERS[i] }),
-              h('span', { text: o }),
+              h('span', { dir: 'auto', text: o }),
             ),
           ),
         ),
@@ -560,6 +655,7 @@ App.take = function take(testId, { preview = false, view = {} } = {}) {
     } else {
       const attrs = {
         value: state.answers[q.id] ?? '',
+        dir: 'auto',
         spellcheck: 'false',
         autocomplete: 'off',
         'aria-label': `Answer to question ${number}`,
@@ -598,13 +694,16 @@ App.take = function take(testId, { preview = false, view = {} } = {}) {
     );
   }
 
+  // Very slow device voices sound the most robotic, so the default is only a
+  // little slower than normal.
   function speedControl() {
-    if (!state.acc.readAloud || !ttsSupported) return null;
-    reader.rate = 0.85;
+    const anyAudio = state.test.instructionsAudio || state.test.questions.some((q) => q.audio);
+    if (!state.acc.readAloud || (!ttsSupported && !anyAudio)) return null;
+    reader.rate = 0.9;
     return h(
       'select',
       { 'aria-label': 'Reading speed', onchange: (e) => (reader.rate = Number(e.target.value)) },
-      [['0.7', 'Slow'], ['0.85', 'A bit slow'], ['1', 'Normal'], ['1.15', 'Fast']].map(([v, l]) => h('option', { value: v, selected: v === '0.85' }, `🔊 ${l}`)),
+      [['0.75', 'Slow'], ['0.9', 'A bit slow'], ['1', 'Normal'], ['1.15', 'Fast']].map(([v, l]) => h('option', { value: v, selected: v === '0.9' }, `🔊 ${l}`)),
     );
   }
 
@@ -617,7 +716,10 @@ App.take = function take(testId, { preview = false, view = {} } = {}) {
     const instructions = t.instructions
       ? (() => {
           const card = h('section', { class: 'q q-section instructions' });
-          card.append(h('div', { class: 'q-head' }, h('h2', { text: 'Instructions' }), listenButton(t.instructions, card)), h('div', { class: 'passage', text: t.instructions }));
+          card.append(
+            h('div', { class: 'q-head' }, h('h2', { text: 'Instructions' }), listenButton(t.instructionsSpeech || t.instructions, card, t.instructionsAudio)),
+            h('div', { class: 'passage', dir: 'auto', text: t.instructions }),
+          );
           return card;
         })()
       : null;

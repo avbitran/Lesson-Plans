@@ -1,6 +1,40 @@
 // Test definitions: validation, the student-safe view, and auto-grading.
 
-const QUESTION_TYPES = ['section', 'mc', 'short', 'long', 'match'];
+const QUESTION_TYPES = ['section', 'mc', 'short', 'long', 'blanks', 'match', 'vocab'];
+const VOICE_PROVIDERS = ['browser', 'google', 'chatterbox'];
+const MAX_BLANKS = 80;
+
+// Fill in the blanks: each answer sits in {curly braces} inside the text,
+// alternatives split by | ("{to play|playing}"). Empty braces {} are a blank
+// the teacher marks.
+const BLANK_RE = /\{([^{}]*)\}/g;
+function parseBlanks(prompt) {
+  const out = [];
+  String(prompt || '').replace(BLANK_RE, (_, inner) => {
+    out.push(inner.split('|').map((x) => x.trim()).filter(Boolean));
+    return '';
+  });
+  return out;
+}
+
+// The order students see matching choices in: shuffled, but the same every
+// time for a given question, so read-aloud audio and saved answers line up.
+function seededShuffle(list, seed) {
+  let h = 2166136261;
+  for (const ch of String(seed)) h = Math.imul(h ^ ch.charCodeAt(0), 16777619) >>> 0;
+  const out = list.slice();
+  for (let i = out.length - 1; i > 0; i--) {
+    h = Math.imul(h ^ (h >>> 15), 2246822507) >>> 0;
+    h = Math.imul(h ^ (h >>> 13), 3266489909) >>> 0;
+    const j = ((h ^ (h >>> 16)) >>> 0) % (i + 1);
+    [out[i], out[j]] = [out[j], out[i]];
+  }
+  return out;
+}
+
+function matchChoices(q) {
+  return [...new Set(q.pairs.map((p) => p.right).concat(q.extra || []))];
+}
 const LANGUAGES = ['en-US', 'en-GB', 'he-IL', 'ar-SA', 'ru-RU', 'fr-FR', 'es-ES', 'de-DE'];
 const ON_LIMIT = ['log', 'lock', 'submit'];
 const SHOW_RESULTS = ['none', 'score', 'full'];
@@ -59,22 +93,43 @@ function normalizeTest(input) {
         .slice(0, 30);
     }
     if (type === 'long') out.modelAnswer = str(q.modelAnswer, 5000);
+    if (type === 'blanks') {
+      const n = parseBlanks(out.prompt).length;
+      if (!n) throw new ValidationError(`Question ${i + 1}: put each answer in {curly braces}, e.g. "She opened a small {business}."`);
+      if (n > MAX_BLANKS) throw new ValidationError(`Question ${i + 1} has more than ${MAX_BLANKS} blanks. Split it into two questions.`);
+      out.wordBank = (Array.isArray(q.wordBank) ? q.wordBank : [])
+        .map((w) => str(w, 200).trim())
+        .filter(Boolean)
+        .slice(0, 60);
+      out.dropdown = !!q.dropdown && out.wordBank.length > 0;
+    }
     if (type === 'match') {
+      out.pairs = (Array.isArray(q.pairs) ? q.pairs : [])
+        .map((p) => ({ left: str(p && p.left, 500).trim(), right: str(p && p.right, 500).trim() }))
+        .filter((p) => p.left && p.right)
+        .slice(0, 40);
+      if (out.pairs.length < 2) throw new ValidationError(`Question ${i + 1} needs at least two pairs to match.`);
+      out.extra = (Array.isArray(q.extra) ? q.extra : [])
+        .map((x) => str(x, 500).trim())
+        .filter(Boolean)
+        .slice(0, 10);
+    }
+    if (type === 'vocab') {
       // Module E vocabulary: numbered items, definitions that each match one
       // item (extra items are distractors), points for each correct match.
       const items = (Array.isArray(q.items) ? q.items : []).map((x) => str(x, 300).trim()).filter(Boolean).slice(0, 20);
-      if (items.length < 2) throw new ValidationError(`Question ${i + 1} (matching) needs at least two items.`);
+      if (items.length < 2) throw new ValidationError(`Question ${i + 1} (vocabulary) needs at least two items.`);
       const pairs = (Array.isArray(q.pairs) ? q.pairs : [])
         .map((p) => ({ text: str(p && p.text, 500).trim(), answer: int(p && p.answer, 0, items.length - 1, 0) }))
         .filter((p) => p.text)
         .slice(0, 20);
-      if (!pairs.length) throw new ValidationError(`Question ${i + 1} (matching) needs at least one definition.`);
+      if (!pairs.length) throw new ValidationError(`Question ${i + 1} (vocabulary) needs at least one definition.`);
       out.items = items;
       out.pairs = pairs;
       out.pointsEach = num(q.pointsEach !== undefined ? q.pointsEach : q.points / pairs.length, 0, 100, 1);
       out.points = Math.round(out.pointsEach * pairs.length * 100) / 100;
     }
-    if (!out.prompt.trim() && !out.title.trim() && type !== 'match') throw new ValidationError(`Question ${i + 1} has no text.`);
+    if (!out.prompt.trim() && !out.title.trim() && type !== 'match' && type !== 'vocab') throw new ValidationError(`Question ${i + 1} has no text.`);
     return out;
   });
 
@@ -98,22 +153,105 @@ function normalizeTest(input) {
       readAloudForAll: !!s.readAloudForAll,
       recordingForAll: !!s.recordingForAll,
       showResults: SHOW_RESULTS.includes(s.showResults) ? s.showResults : 'score',
+      voice: {
+        provider: VOICE_PROVIDERS.includes(s.voice && s.voice.provider) ? s.voice.provider : 'browser',
+        name: str(s.voice && s.voice.name, 100).trim(),
+      },
     },
     questions,
   };
 }
 
 // What a student's browser gets: no correct answers, no model answers.
-function studentView(test) {
-  return {
-    ...test,
-    // Students are told how many answers to choose, not which.
-    questions: test.questions.map(({ correct, accepted, modelAnswer, scoring, ...rest }) => {
-      if (rest.multiple) return { ...rest, choose: correct.length };
-      if (rest.type === 'match') return { ...rest, pairs: rest.pairs.map((p) => ({ text: p.text })) };
-      return rest;
-    }),
-  };
+// Every item also carries `speech`, the exact text read aloud, and `audio`,
+// the id of prepared natural-voice audio for it (null: use the device voice).
+// audioFor(text) looks that id up; it's optional.
+function studentView(test, audioFor) {
+  const find = audioFor || (() => null);
+  const questions = test.questions.map(({ correct, accepted, modelAnswer, scoring, pairs, extra, ...rest }) => {
+    const q = { ...rest };
+    if (rest.multiple) q.choose = correct.length;
+    if (rest.type === 'blanks') {
+      q.prompt = rest.prompt.replace(BLANK_RE, '{}');
+      q.blankCount = parseBlanks(rest.prompt).length;
+    }
+    if (rest.type === 'match') {
+      q.left = pairs.map((p) => p.left);
+      q.right = seededShuffle(matchChoices({ pairs, extra }), rest.id);
+    }
+    // Module E vocabulary: the definitions without their answers.
+    if (rest.type === 'vocab') q.pairs = pairs.map((p) => ({ text: p.text }));
+    q.speech = speechText(q);
+    q.audio = find(q.speech);
+    return q;
+  });
+  const instructionsSpeech = sentence(test.instructions);
+  return { ...test, questions, instructionsSpeech, instructionsAudio: instructionsSpeech ? find(instructionsSpeech) : null };
+}
+
+// Ends a piece of text with punctuation so voices pause naturally.
+function sentence(s) {
+  const t = String(s || '').trim();
+  return !t || /[.!?:;…"'”)\]]$/.test(t) ? t : `${t}.`;
+}
+
+const LETTERS_ = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+
+// "a small ___ selling" is read as "a small … blank … selling".
+const blankWords = (s) =>
+  String(s || '')
+    .replace(/\s*_{2,}\s*/g, ' … blank … ')
+    .replace(/[ \t]+/g, ' ')
+    .replace(/ ([.,!?;:])/g, '$1')
+    .trim();
+
+// What 🔊 Listen reads for one item (given the student version of it).
+function speechText(q) {
+  const parts = [sentence(q.title)];
+  if (q.type === 'blanks') {
+    if (q.wordBank && q.wordBank.length) parts.push(sentence(`The words are: ${q.wordBank.join(', ')}`));
+    for (const line of q.prompt.split('\n')) parts.push(sentence(blankWords(line.replace(/\{\}/g, '___'))));
+  } else if (q.type === 'vocab') {
+    parts.push(sentence(q.prompt));
+    parts.push('The items are:');
+    q.items.forEach((it, i) => parts.push(sentence(`${i + 1}: ${it}`)));
+    parts.push('The definitions are:');
+    q.pairs.forEach((p) => parts.push(sentence(p.text)));
+  } else if (q.type === 'match') {
+    parts.push(sentence(q.prompt));
+    q.left.forEach((l, i) => parts.push(sentence(`${i + 1}: ${l}`)));
+    parts.push('The choices are:');
+    q.right.forEach((r, i) => parts.push(sentence(`${LETTERS_[i]}: ${r}`)));
+  } else {
+    parts.push(sentence(blankWords(q.prompt)));
+    if (q.multiple) parts.push(`Choose ${q.choose} answers.`);
+    if (q.type === 'mc') q.options.forEach((o, i) => parts.push(sentence(`${LETTERS_[i]}: ${o}`)));
+  }
+  return parts.filter(Boolean).join('\n');
+}
+
+// Splits text for a speech service: by language (Hebrew and Arabic stretches
+// get their own voice) and into pieces of at most maxLen characters, cut at
+// sentence ends where possible.
+function ttsPieces(text, lang, maxLen) {
+  const scriptOf = (s) => (/[֐-׿]/.test(s) ? 'he-IL' : /[؀-ۿ]/.test(s) ? 'ar-SA' : null);
+  const sentences = String(text || '')
+    .split(/(?<=[.!?;:…])\s+|\n+/)
+    .map((x) => x.trim())
+    .filter(Boolean);
+  const pieces = [];
+  for (let sen of sentences) {
+    const l = scriptOf(sen) || lang;
+    while (sen.length > maxLen) {
+      const cut = sen.lastIndexOf(' ', maxLen) > maxLen / 2 ? sen.lastIndexOf(' ', maxLen) : maxLen;
+      pieces.push({ text: sen.slice(0, cut).trim(), lang: l });
+      sen = sen.slice(cut).trim();
+    }
+    const last = pieces[pieces.length - 1];
+    if (last && last.lang === l && last.text.length + sen.length + 1 <= maxLen) last.text += ` ${sen}`;
+    else if (sen) pieces.push({ text: sen, lang: l });
+  }
+  return pieces;
 }
 
 function maxScore(test) {
@@ -147,13 +285,18 @@ function autoGrade(test, answers, recordedQuestionIds) {
     const a = answers[q.id];
     const recorded = recordedQuestionIds.has(q.id);
     const empty =
-      a === undefined || a === null || (typeof a === 'string' && !a.trim()) || (Array.isArray(a) && !a.some((x) => x !== null && x !== undefined));
+      a === undefined || a === null || (typeof a === 'string' && !a.trim()) || (Array.isArray(a) && !a.some((x) => (typeof x === 'string' ? x.trim() : x !== null && x !== undefined)));
     let auto = null;
     let review = true;
-    if (q.type === 'match' && Array.isArray(a) && !empty) {
+    const emptyList = Array.isArray(a) && !a.some((x) => (typeof x === 'string' ? x.trim() : x !== null && x !== undefined));
+    if (q.type === 'vocab' && Array.isArray(a) && !emptyList) {
       const right = q.pairs.filter((p, k) => a[k] === p.answer).length;
       auto = Math.round(right * q.pointsEach * 100) / 100;
       review = recorded;
+    } else if ((q.type === 'blanks' || q.type === 'match') && Array.isArray(a) && !emptyList) {
+      const g = q.type === 'blanks' ? gradeBlanks(q, a) : gradeMatch(q, a);
+      auto = g.auto;
+      review = g.review || recorded;
     } else if (q.type === 'mc' && q.multiple && Array.isArray(a) && a.length) {
       auto = scoreMultiple(q, a);
       review = recorded;
@@ -171,6 +314,31 @@ function autoGrade(test, answers, recordedQuestionIds) {
     result[q.id] = { auto, review, max: q.points };
   }
   return result;
+}
+
+const share = (points, hits, total) => Math.round((points * hits * 100) / total) / 100;
+
+// Each blank is worth an equal share. A blank with no accepted answers, or an
+// answer that matched none, is left for the teacher to check.
+function gradeBlanks(q, a) {
+  const keys = parseBlanks(q.prompt);
+  let hits = 0;
+  let review = false;
+  keys.forEach((accepted, i) => {
+    const given = typeof a[i] === 'string' ? a[i] : '';
+    if (!accepted.length) {
+      if (given.trim()) review = true;
+      return;
+    }
+    if (accepted.some((acc) => normalizeAnswer(acc) === normalizeAnswer(given))) hits++;
+    else if (given.trim()) review = true;
+  });
+  return { auto: share(q.points, hits, keys.length), review };
+}
+
+function gradeMatch(q, a) {
+  const hits = q.pairs.filter((p, i) => typeof a[i] === 'string' && normalizeAnswer(a[i]) === normalizeAnswer(p.right)).length;
+  return { auto: share(q.points, hits, q.pairs.length), review: false };
 }
 
 // Partial: an equal share of the points for each correct option chosen
@@ -197,5 +365,8 @@ function totalScore(test, auto, grading) {
 }
 
 if (typeof module !== 'undefined') {
-  module.exports = { ValidationError, normalizeTest, studentView, maxScore, normalizeAnswer, autoGrade, totalScore, LANGUAGES };
+  module.exports = {
+    ValidationError, normalizeTest, studentView, maxScore, normalizeAnswer, autoGrade, totalScore, LANGUAGES,
+    parseBlanks, matchChoices, seededShuffle, speechText, ttsPieces, sentence, VOICE_PROVIDERS,
+  };
 }

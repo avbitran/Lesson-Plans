@@ -375,7 +375,7 @@ test('upgrade from the single-teacher version keeps everything', () => {
   assert.equal(db.get('attempts', 'a1').score, 17.5, 'results untouched');
 });
 
-test('matching (Module E vocabulary): per-match points, key hidden from students', () => {
+test('Module E vocabulary (numbered items): per-match points, key hidden from students', () => {
   const { teacher, asStudent, addClass, call } = setup();
   addClass(teacher, 'A', [{ email: 's@school.org', name: 'S' }]);
   const data = {
@@ -383,7 +383,7 @@ test('matching (Module E vocabulary): per-match points, key hidden from students
     questions: [
       {
         id: 'm1',
-        type: 'match',
+        type: 'vocab',
         prompt: 'Match three of the items 1–6 to the definitions.',
         items: ['a calendar', 'a season', 'an island', 'traffic', 'a prize', 'a label'],
         pairs: [
@@ -410,5 +410,5 @@ test('matching (Module E vocabulary): per-match points, key hidden from students
   assert.equal(d.auto.m1.auto, 2, 'one correct match');
   assert.equal(core.autoGrade({ questions: [saved] }, { m1: [null, null, null] }, new Set()).m1.auto, 0);
   assert.equal(core.autoGrade({ questions: [saved] }, { m1: [3, 0, 4] }, new Set()).m1.auto, 6);
-  assert.throws(() => core.normalizeTest({ title: 'x', questions: [{ type: 'match', items: ['only one'], pairs: [{ text: 't', answer: 0 }] }] }), /at least two items/);
+  assert.throws(() => core.normalizeTest({ title: 'x', questions: [{ type: 'vocab', items: ['only one'], pairs: [{ text: 't', answer: 0 }] }] }), /at least two items/);
 });

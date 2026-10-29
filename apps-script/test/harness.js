@@ -17,10 +17,33 @@ const db = new MemoryStore();
 const drive = new Map();
 let settings = {};
 const PORT = Number(process.env.PORT) || 3500;
+
+// Stand-in for Google / Chatterbox: a short beep per piece of text.
+function beep(seconds) {
+  const rate = 8000;
+  const n = Math.round(rate * seconds);
+  const buf = Buffer.alloc(44 + n * 2);
+  buf.write('RIFF', 0);
+  buf.writeUInt32LE(36 + n * 2, 4);
+  buf.write('WAVEfmt ', 8);
+  buf.writeUInt32LE(16, 16);
+  buf.writeUInt16LE(1, 20);
+  buf.writeUInt16LE(1, 22);
+  buf.writeUInt32LE(rate, 24);
+  buf.writeUInt32LE(rate * 2, 28);
+  buf.writeUInt16LE(2, 32);
+  buf.writeUInt16LE(16, 34);
+  buf.write('data', 36);
+  buf.writeUInt32LE(n * 2, 40);
+  for (let i = 0; i < n; i++) buf.writeInt16LE(Math.round(Math.sin((2 * Math.PI * 440 * i) / rate) * 3000), 44 + i * 2);
+  return buf.toString('base64');
+}
 const api = createApi({
   db,
   ownerEmail: OWNER,
   withLock: (fn) => fn(),
+  hash: (s) => require('node:crypto').createHash('sha256').update(s).digest('hex'),
+  tts: { synthesize: (o) => ttsPieces(o.text, o.language, 300).map(() => ({ mime: 'audio/wav', data: beep(0.3) })) },
   files: { save: (n, m, d) => (drive.set(n, d), n), read: (id) => drive.get(id), remove: (id) => drive.delete(id) },
   exportResults: (title, rows) => `about:blank#${encodeURIComponent(title)}-${rows.length}`,
   // A pretend Google Classroom with one class.
@@ -30,8 +53,16 @@ const api = createApi({
   },
   makeInstallCopy: () => ({ copyLink: 'https://docs.google.com/spreadsheets/d/EXAMPLE/copy', fileUrl: 'about:blank', sharing: 'anyone' }),
   settings: {
-    get: () => ({ recorderUrl: settings.recorderUrl || `http://localhost:${PORT}/recorder.html`, spreadsheetUrl: 'about:blank', recordingsUrl: 'about:blank' }),
-    set: (s) => (settings = s),
+    get: () => ({
+      recorderUrl: settings.recorderUrl || `http://localhost:${PORT}/recorder.html`,
+      spreadsheetUrl: 'about:blank',
+      recordingsUrl: 'about:blank',
+      voices: { googleKeySet: !!settings.googleKey, chatterboxUrl: settings.chatterboxUrl || '', chatterboxKeySet: !!settings.chatterboxKey },
+    }),
+    set: (s) => (settings = { ...settings, recorderUrl: s.recorderUrl }),
+    setVoices: (v) => {
+      for (const k of Object.keys(v)) if (v[k] !== undefined) settings[k] = v[k];
+    },
   },
 });
 

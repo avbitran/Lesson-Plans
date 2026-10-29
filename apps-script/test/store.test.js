@@ -133,3 +133,13 @@ test('the upgrade, run on a sheet laid out like the previous version, keeps a gr
   const result = api.handle('GET', '/api/my/attempts/att1/result', null, dana);
   assert.equal(result.marks.d1.comment, 'Nice');
 });
+
+test("reads the audio tab's one-column JSON written under its old plain header", () => {
+  const ss = new FakeSpreadsheet();
+  const sh = ss.insertSheet('audio');
+  sh.cells.push(['id', 'provider', 'voice', 'chars', 'createdAt', 'parts']);
+  sh.cells.push(['h1', 'google', 'en-US-Neural2-F', 12, 1, JSON.stringify([{ fileId: 'f1', mime: 'audio/mpeg' }])]);
+  const db = new SheetStore(ss);
+  assert.deepEqual(db.get('audio', 'h1').parts, [{ fileId: 'f1', mime: 'audio/mpeg' }]);
+  assert.deepEqual(sh.cells[0], ['id', 'provider', 'voice', 'chars', 'createdAt', 'parts'], 'no duplicate column added');
+});

@@ -17,6 +17,8 @@ const SCHEMAS = {
   ],
   events: ['id', 'attemptId', 'at:num', 'type', 'detail', 'counted:bool'],
   recordings: ['id', 'attemptId', 'questionId', 'fileId', 'mime', 'size:num', 'duration:num', 'createdAt:num'],
+  // Natural-voice read-aloud audio: id = hash of voice + text; parts = [{ fileId, mime }].
+  audio: ['id', 'provider', 'voice', 'chars:num', 'createdAt:num', 'parts:json:1'],
 };
 const JSON_CHUNK = 45000;
 
@@ -90,6 +92,8 @@ class SheetStore {
     header.forEach((name, i) => {
       if (name && !(name in at)) at[name] = i + 1;
     });
+    // A one-column JSON field was headed plain "name" before this version.
+    for (const f of fields) if (f.type === 'json' && f.width === 1 && !(f.headers[0] in at) && f.name in at) at[f.headers[0]] = at[f.name];
     const missing = [];
     for (const f of fields) for (const name of f.headers) if (!(name in at)) missing.push({ f, name });
     if (missing.length) {
